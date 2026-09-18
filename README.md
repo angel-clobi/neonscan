@@ -99,6 +99,19 @@ cd neonscan
 python3 neonscan.py --offline
 ```
 
+**One-shot setup:** instead of steps 2–3 you can run the bundled installer, which
+installs the prerequisites, extracts the vendored `rich`, and smoke-tests the tool:
+
+```bash
+# from scratch:
+pkg install -y git && git clone https://github.com/angel-clobi/neonscan
+cd neonscan && bash setup-termux.sh
+```
+
+It reports exactly which tools are present, never aborts on a missing optional
+package, and reminds you that `wifi`/`aps` need the Termux:API app plus
+`pkg install termux-api`.
+
 **What works where on Termux**
 
 | Works out of the box (pure stdlib) | Needs a package | Needs Termux:API |

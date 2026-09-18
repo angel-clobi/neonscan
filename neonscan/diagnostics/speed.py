@@ -311,6 +311,7 @@ def measure_iperf3(
     Requires iperf3 on PATH; if missing, the result has `error` set gracefully.
     """
     res = DiagResult(title=f"iperf3 :: {server or 'localhost'}")
+    server_proc = None  # set only when we spin up a local server below
 
     try:
         iperf = subprocess.run(["which", "iperf3"], capture_output=True, text=True, timeout=3)
@@ -324,7 +325,6 @@ def measure_iperf3(
     if server is None:
         # No remote server specified: try to start a local iperf3 server, then
         # connect our client to ourselves.
-        server_proc = None
         try:
             server_proc = subprocess.Popen(
                 [iperf_path, "-s", "-1"],
@@ -343,7 +343,7 @@ def measure_iperf3(
     ]
     if reverse:
         # upload test instead of download
-        cmd.insert(1, "-R")
+        cmd.append("-R")
 
     t0 = time.perf_counter()
     try:

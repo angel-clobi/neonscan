@@ -80,115 +80,102 @@ def _decode_mdns_name(buf: bytes, pos: int) -> tuple[str, int, list[tuple[str, s
     return ".".join(labels) + ".", cur, out
 
 
-def _parse_response(buf: bytes, target_base: str) -> list[dict]:
-    """Extract PTR + SRV + TXT records belonging to `target_base`."""
+def _parse_response(buf: bytes, target_base: str = "") -> list[dict]:
+    """Extract service instances (PTR + SRV + TXT + A) from an mDNS response.
+
+    Record types: PTR = 12 (service-type -> instance), SRV = 33 (instance ->
+    host + port), TXT = 16 (instance metadata), A = 1 (host -> IPv4).  We key
+    the SRV/TXT slots by *instance* name so the port/host attach to the PTR's
+    instance, and resolve the IP through the SRV target.
+    """
     if len(buf) < 12:
         return []
-    _qid, flags, _qd, _an, _ns, _ar = struct.unpack(">HHHHHH", buf[:12])
+    _qid, _flags, _qd, _an, _ns, _ar = struct.unpack(">HHHHHH", buf[:12])
     pos = 12
 
-    # skip question section
-    for _ in range(_qd):
-        # skip name
-        while pos < len(buf):
-            l = buf[pos]
-            if l == 0:
-                pos += 1
-                break
-            if l & 0xC0 == 0xC0:
-                pos += 2
-                break
-            pos += l + 1
-        pos += 4  # type+class
-
-    entries: dict[str, dict] = {}
-
-    def walk_name(p: int, store_ptr_name: bool = False) -> tuple[str, int]:
-        labels = []
+    def walk_name(p: int) -> tuple[str, int]:
+        labels: list[str] = []
         jumps = 0
         cur = p
-        while True:
-            if cur >= len(buf):
-                break
+        while cur < len(buf):
             l = buf[cur]
             if l == 0:
                 cur += 1
                 break
             if l & 0xC0 == 0xC0:
-                if cur + 1 >= len(buf):
+                if cur + 1 >= len(buf) or jumps > 20:
                     break
-                offset = struct.unpack(">H", buf[cur:cur + 2])[0] & 0x3FFF
+                cur = struct.unpack(">H", buf[cur:cur + 2])[0] & 0x3FFF
                 jumps += 1
-                cur = offset
                 continue
             cur += 1
             labels.append(buf[cur:cur + l].decode("ascii", errors="ignore"))
             cur += l
         return (".".join(labels) + "."), cur
 
-    def read_record() -> Optional[tuple[str, int, int, int, int]]:
-        """Skip a name; return (rdname, type, class, ttl, rdlen, end_pos)."""
-        nonlocal pos
-        rdname, npos = walk_name(pos)
-        if npos + 10 > len(buf):
-            return None
-        pos = npos
-        rtype, rclass, _ttl, rdlen = struct.unpack(">HHIH", buf[pos:pos + 10])
-        pos += 10
-        if pos + rdlen > len(buf):
-            return None
-        return rdname, rtype, rclass, rdlen, pos
+    # skip question section
+    for _ in range(_qd):
+        _qname, pos = walk_name(pos)
+        pos += 4  # type + class
+
+    instances: dict[str, dict] = {}
+    a_by_host: dict[str, str] = {}
+
+    def slot_for(name: str) -> dict:
+        return instances.setdefault(name, {"service": "", "host": "", "port": 0, "txt": []})
 
     for _ in range(_an + _ns + _ar):
-        rec = read_record()
-        if rec is None:
+        rdname, npos = walk_name(pos)
+        if npos + 10 > len(buf):
             break
-        rdname, rtype, _rclass, rdlen, rdata_pos = rec
+        pos = npos
+        rtype, _rclass, _ttl, rdlen = struct.unpack(">HHIH", buf[pos:pos + 10])
+        pos += 10
+        if pos + rdlen > len(buf):
+            break
+        rdata_pos = pos
         rdata = buf[rdata_pos:rdata_pos + rdlen]
-        # group by service instance (e.g. "My Printer._http._tcp.local.")
-        if rtype in (12, 33):  # PTR
-            target, _ = walk_name(rdata_pos)
-            key = rdname
-            slot = entries.setdefault(key, {"ptr": [], "srv": None, "txt": [], "a_records": []})
-            slot["ptr"].append(target)
-        elif rtype == 33:  # SRV
-            _pri, _weight, _port = struct.unpack(">HHH", rdata[:6])
+
+        if rtype == 12:  # PTR: rdname = service type, rdata = instance name
+            instance, _ = walk_name(rdata_pos)
+            slot = slot_for(instance)
+            if not slot["service"]:
+                slot["service"] = rdname
+        elif rtype == 33 and rdlen >= 6:  # SRV: rdname = instance
+            _pri, _weight, port = struct.unpack(">HHH", rdata[:6])
             target, _ = walk_name(rdata_pos + 6)
-            target_base_name = target.replace("._tcp.local.", "._tcp.local.")
-            slot = entries.setdefault(rdname, {"ptr": [], "srv": None, "txt": [], "a_records": []})
-            if slot["srv"] is None:
-                slot["srv"] = {"target": target, "port": _port}
-        elif rtype == 16:  # TXT
-            # txt chunks are length-prefixed strings
-            chunks = []
+            slot = slot_for(rdname)
+            slot["port"] = port
+            slot["host"] = target
+        elif rtype == 16:  # TXT: rdname = instance
+            chunks: list[str] = []
             i = 0
-            while i < len(rdata) and rdata[i] <= len(rdata) - i - 1:
+            while i < len(rdata):
                 ln = rdata[i]
                 i += 1
+                if ln == 0 or i + ln > len(rdata):
+                    break
                 chunks.append(rdata[i:i + ln].decode("ascii", errors="ignore"))
                 i += ln
-            slot = entries.setdefault(rdname, {"ptr": [], "srv": None, "txt": [], "a_records": []})
-            slot["txt"].extend(chunks)
-        elif rtype == 1 and rdlen == 4:  # A
-            ip = ".".join(str(b) for b in rdata)
-            # find slot by parent name
-            slot = entries.setdefault(rdname, {"ptr": [], "srv": None, "txt": [], "a_records": []})
-            slot["a_records"].append(ip)
+            if chunks:
+                slot_for(rdname)["txt"].extend(chunks)
+        elif rtype == 1 and rdlen == 4:  # A: rdname = hostname
+            a_by_host[rdname] = ".".join(str(b) for b in rdata)
+
         pos = rdata_pos + rdlen
 
-    # Compact for output
     out = []
-    for name, slot in entries.items():
-        for tgt in slot["ptr"]:
-            srv = slot["srv"] or {}
-            out.append({
-                "service": name,
-                "instance": tgt,
-                "port": srv.get("port", 0),
-                "host": srv.get("target", ""),
-                "txt": slot["txt"],
-                "ip": slot["a_records"][0] if slot["a_records"] else "",
-            })
+    for instance, slot in instances.items():
+        if not slot["service"] and not slot["host"] and slot["port"] == 0 and not slot["txt"]:
+            continue  # bare A-record host, not a service instance
+        out.append({
+            "service": slot["service"],
+            "instance": instance,
+            "port": slot["port"],
+            "host": slot["host"],
+            "txt": slot["txt"],
+            "ip": a_by_host.get(slot["host"], ""),
+        })
     return out
 
 
@@ -198,76 +185,84 @@ def discover_mdns(
 ) -> DiagResult:
     """Issue mDNS PTR queries for the supplied services and aggregate responses."""
     res = DiagResult(title="mDNS · Bonjour")
-    if services is None:
-        services = DEFAULT_SERVICES
+    services = list(services) if services is not None else DEFAULT_SERVICES
+    type_to_label = {stype: label for stype, label in services}
 
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    try:  # SO_REUSEPORT lets us bind 5353 alongside mDNSResponder/avahi
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+    except (AttributeError, OSError):
+        pass
     s.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 255)
-    s.settimeout(wait_ms / 1000)
+
+    bound_5353 = True
     try:
         s.bind(("", 5353))
     except OSError:
+        bound_5353 = False
         try:
             s.bind(("", 0))
         except OSError as exc:
+            s.close()
             res.error = f"could not bind for mDNS: {exc}"
             return res
+
+    # Join the mDNS multicast group so responses to 224.0.0.251 reach us.
     try:
-        all_results: dict[str, list[dict]] = {}
-        for query_name, label in services:
-            pkt = _encode_mdns_query(query_name)
-            sent_at = time.time()
+        mreq = struct.pack("=4sl", socket.inet_aton("224.0.0.251"), socket.INADDR_ANY)
+        s.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
+    except OSError:
+        pass
+    s.settimeout(0.4)
+
+    packets: list[bytes] = []
+    try:
+        # Fire all queries first, then listen once for the whole window.
+        for query_name, _label in services:
             try:
-                s.sendto(pkt, ("224.0.0.251", 5353))
-            except OSError as exc:
-                res.add(label, f"send failed: {exc}", severity=Severity.WARN)
+                s.sendto(_encode_mdns_query(query_name), ("224.0.0.251", 5353))
+            except OSError:
+                pass
+        deadline = time.time() + wait_ms / 1000.0
+        while time.time() < deadline:
+            try:
+                data, _addr = s.recvfrom(9000)
+                packets.append(data)
+            except socket.timeout:
                 continue
-            collected = []
-            while time.time() - sent_at < wait_ms / 1000.0 / max(len(list(services)), 1):
-                try:
-                    _data, _addr = s.recvfrom(4096)
-                except socket.timeout:
-                    break
-                except OSError:
-                    break
-                # we ignore _data here; we'll let the global parser decode it
-                collected.append(_data)
-            all_results[label] = [len(collected)] + collected  # store count + raw
-
-        # parse globally
-        per_service: dict[str, list[dict]] = {}
-        for label, lst in all_results.items():
-            count = lst[0]
-            entries = []
-            for buf in lst[1:]:
-                if isinstance(buf, bytes):
-                    entries.extend(_parse_response(buf, ""))
-            per_service[label] = entries
-
-        total = 0
-        per_service_counts = []
-        for label, entries in per_service.items():
-            if not entries:
-                continue
-            total += len(entries)
-            per_service_counts.append((label, entries))
-            res.add(
-                label,
-                f"{len(entries)} service(s)",
-                severity=Severity.OK,
-            )
-
-        res.raw = {
-            "services": {
-                label: entries
-                for label, entries in per_service_counts
-            },
-            "count": total,
-        }
-        res.summary = f"{total} service announcements"
-        if total == 0:
-            res.error = "no mDNS responses received (is multicast enabled on the interface?)"
+            except OSError:
+                break
     finally:
         s.close()
+
+    # Parse everything, de-duplicate by (instance, port).
+    entries: list[dict] = []
+    seen: set = set()
+    for buf in packets:
+        for e in _parse_response(buf):
+            key = (e["instance"], e["port"])
+            if key in seen:
+                continue
+            seen.add(key)
+            entries.append(e)
+
+    # Group by the requested service labels (fall back to "other").
+    by_label: dict[str, list[dict]] = {}
+    for e in entries:
+        label = "other"
+        for stype, lab in type_to_label.items():
+            if stype in e["service"] or stype in e["instance"]:
+                label = lab
+                break
+        by_label.setdefault(label, []).append(e)
+
+    total = len(entries)
+    for label, ents in sorted(by_label.items()):
+        res.add(label, f"{len(ents)} service(s)", severity=Severity.OK)
+
+    res.raw = {"services": by_label, "count": total, "bound_5353": bound_5353}
+    res.summary = f"{total} service instance(s)"
+    if total == 0:
+        res.error = "no mDNS responses received (multicast may be filtered on this interface)"
     return res

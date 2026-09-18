@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import platform
 import re
+import socket
 import statistics
 import subprocess
 from typing import Optional
@@ -37,9 +38,6 @@ def _traceroute_with_probes(target: str, max_hops: int, probes: int, wait_s: int
         return f"# ERROR: traceroute unavailable: {exc}"
 
 
-_HOP_RE = re.compile(
-    r"^\s*(\d+)\s+(\S+)\s+\((\d+\.\d+\.\d+\.\d+)\)\s+(.*)$"
-) if False else None  # nosem
 _HOP_LINE = re.compile(r"^\s*(\d+)\s+(\S+)(?:\s+\((\d+\.\d+\.\d+\.\d+)\))?\s*(.*)$")
 
 
@@ -101,7 +99,11 @@ def measure_mtr(
         res.error = "traceroute returned no usable output"
         return res
     last_reached = next((h for h in reversed(base) if h["ip"] not in ("?", "*")), None)
-    reached = last_reached and last_reached["ip"] == target
+    try:
+        target_ip = socket.gethostbyname(target)
+    except OSError:
+        target_ip = target
+    reached = bool(last_reached and last_reached["ip"] == target_ip)
 
     # Aggregate per-hop timing across cycles
     hop_stats: dict[int, dict] = {}
@@ -160,7 +162,7 @@ def measure_mtr(
             sev = Severity.WARN
         if r["avg_ms"] is not None:
             if r["avg_ms"] >= 200:
-                sev = Severity.FAIL if sev != Severity.FAIL else Severity.FAIL
+                sev = Severity.FAIL
             elif r["avg_ms"] >= 100:
                 sev = max([Severity.WARN, sev], key=lambda s: list(Severity).index(s))
         avg_label = f"{r['avg_ms']:.0f}" if r["avg_ms"] is not None else "—"

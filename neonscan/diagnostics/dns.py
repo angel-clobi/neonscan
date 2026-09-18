@@ -21,12 +21,14 @@ from .result import DiagResult, Severity
 
 
 # Curated list of public resolvers to test against the SAME domain.
+# The machine's own resolver(s) are added separately from /etc/resolv.conf
+# (see `_find_resolvers`) — we don't hardcode 127.0.0.1, which is usually not
+# listening and would drag the "N/M OK" tally down for no reason.
 DEFAULT_RESOLVERS: list[tuple[str, str]] = [
     ("8.8.8.8", "Google"),
     ("1.1.1.1", "Cloudflare"),
     ("9.9.9.9", "Quad9"),
     ("208.67.222.222", "OpenDNS"),
-    ("127.0.0.1", "Local"),
 ]
 
 
@@ -129,7 +131,11 @@ def _encode_dns_query(name: str, qtype: int = 1, qclass: int = 1) -> bytes:
     for label in name.strip(".").split("."):
         if not label:
             continue
-        parts.append(bytes([len(label)]) + label.encode("ascii"))
+        try:
+            lab = label.encode("ascii")
+        except UnicodeEncodeError:
+            lab = label.encode("idna")  # IDN / punycode
+        parts.append(bytes([len(lab)]) + lab)
     question = b"".join(parts) + b"\x00" + struct.pack(">HH", qtype, qclass)
     return header + question
 

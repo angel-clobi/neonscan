@@ -139,7 +139,8 @@ def _try_port(ip: str, port: int, timeout: float = 1.0) -> PortResult:
 # ---------------------------------------------------------------------------
 
 def _http_request(ip: str, port: int, use_tls: bool) -> tuple[int, str, str, str]:
-    """Issue a quick HEAD via http.client. Return (status, server, title, body)."""
+    """Issue a quick GET via http.client. Return (status, server, title, body)."""
+    conn = None
     try:
         if use_tls:
             ctx = ssl.create_default_context()
@@ -164,13 +165,18 @@ def _http_request(ip: str, port: int, use_tls: bool) -> tuple[int, str, str, str
         body = b""
         if resp.status >= 200:
             body = resp.read(2048)
-        conn.close()
 
         server = headers.get("server", "")
         title = _extract_title(body.decode(errors="ignore")) if body else ""
         return raw_status, server, title, body.decode(errors="ignore")[:512]
     except Exception:
         return 0, "", "", ""
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
 
 _TITLE_RE = re.compile(r"<title[^>]*>([^<]+)</title>", re.IGNORECASE | re.DOTALL)

@@ -118,14 +118,11 @@ def diff_against_baseline(b: Baseline, results: list[DiagResult]) -> DiagResult:
         new = cur.metrics.get(k)
         if old is None or new is None:
             continue
-        try:
-            old_f, new_f = float(old), float(new)
-        except (TypeError, ValueError):
-            continue
-        delta = new_f - old_f
-        # Strip a "wifi_rssi": string such as "-67 dBm"
+
+        # Values may be plain numbers or strings like "-67 dBm"; extract the
+        # number in either case (a bare float() would choke on the unit).
         def numval(v):
-            m = __import__("re").search(r"-?\d+", str(v))
+            m = __import__("re").search(r"-?\d+(?:\.\d+)?", str(v))
             return float(m.group()) if m else None
 
         old_n = numval(old)
@@ -134,12 +131,16 @@ def diff_against_baseline(b: Baseline, results: list[DiagResult]) -> DiagResult:
             continue
         delta = new_n - old_n
         sign = "%+.1f"
-        # Wi-Fi RSSI got worse if it's more negative
+        # Wi-Fi RSSI got worse if it's more negative. `drop` is how many dBm
+        # the signal fell (negative when it improved).
         if k == "wifi_rssi":
-            severity = (
-                Severity.OK if delta >= 0 else
-                (warn_sev if -delta >= warn_thr and -delta < fail_thr else fail_sev)
-            )
+            drop = -delta
+            if drop < warn_thr:      # within noise (or improved)
+                severity = Severity.OK
+            elif drop < fail_thr:
+                severity = warn_sev
+            else:
+                severity = fail_sev
         else:
             severity = (
                 Severity.OK if abs(delta) < warn_thr else (
@@ -170,12 +171,14 @@ def watch_loop(
 
     last: Optional[Baseline] = None
     snapshots: list[Baseline] = []
+    diffs: list[DiagResult] = []
     for i in range(cycles):
         results = run_full_diag(monitor_s=0.0, speed_size_mb=2)
         b = build_baseline(results)
         snapshots.append(b)
         if last is not None:
-            diff_against_baseline(last, results)
+            diffs.append(diff_against_baseline(last, results))
         last = b
-        time.sleep(interval_s)
-    return snapshots
+        if i < cycles - 1:
+            time.sleep(interval_s)
+    return snapshots, diffs

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import socket
 import time
@@ -41,12 +42,17 @@ def _ssl_ctx():
 
 
 def _reverse_dns(ip: str) -> str:
+    # Save/restore the process-wide default timeout so we don't leak a 1s
+    # default onto every other socket created later in the process.
+    prev = socket.getdefaulttimeout()
     try:
         socket.setdefaulttimeout(1.0)
         host, _, _ = socket.gethostbyaddr(ip)
         return host
     except (socket.herror, socket.gaierror, OSError):
         return ""
+    finally:
+        socket.setdefaulttimeout(prev)
 
 
 def get_public_ip() -> DiagResult:
@@ -91,12 +97,18 @@ def get_public_ip() -> DiagResult:
     city = info.get("city") or ""
     tz = info.get("timezone") or ""
 
-    # Naive proxy/VPN hint: latency to ipify vs latency to a known-leaking endpoint
-    # is unreliable. Best simple heuristic: real-RFC1918 shows up as "private".
+    # Naive proxy/VPN hint. Best simple heuristic: a private/loopback address
+    # returned by a public endpoint means we're behind NAT/proxy.
     proxy_hint = "no"
-    if ip.startswith(("10.", "192.168.", "172.16.", "172.17.", "172.18.", "172.19.", "172.2", "172.21.", "172.22.", "172.23.", "172.24.", "172.25.", "172.26.", "172.27.", "172.28.", "172.29.", "172.30.", "172.31.", "127.")):
-        proxy_hint = "private (NAT)"
-    elif rdns and any(t in rdns.lower() for t in ("tor", "exit", "vpn", "proxy", "host")):
+    try:
+        ipobj = ipaddress.ip_address(ip)
+        if ipobj.is_private or ipobj.is_loopback:
+            proxy_hint = "private (NAT)"
+    except ValueError:
+        pass
+    if proxy_hint == "no" and rdns and any(
+        t in rdns.lower() for t in ("tor", "-exit", "vpn", "proxy")
+    ):
         proxy_hint = "possible proxy/exit (hostname)"
 
     res.add("IP", ip, severity=Severity.OK)

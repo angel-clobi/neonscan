@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Iterable, Optional
 
@@ -33,7 +33,7 @@ SEV_BADGES = {
 def to_markdown(results: list[DiagResult], title: str = "NeonScan report") -> str:
     """Render a Markdown report suitable for sharing / pasting."""
     lines: list[str] = [f"# {title}", ""]
-    ts = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
     lines.append(f"_generated {ts}_  ")
     lines.append("")
     # Summary table
@@ -81,7 +81,7 @@ def to_json(results: list[DiagResult]) -> str:
     """Serialize all diagnostic results to JSON."""
     out = {
         "scanner": "neonscan",
-        "generated": datetime.utcnow().isoformat() + "Z",
+        "generated": datetime.now(timezone.utc).isoformat(),
         "results": [r.to_dict() for r in results],
     }
     return json.dumps(out, indent=2, default=str)

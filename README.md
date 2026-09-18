@@ -1,4 +1,4 @@
-# ⚡ NeonScan v1.3.0
+# ⚡ NeonScan v1.3.1
 
 > Cyberpunk-styled, interactive **local-network reconnaissance + diagnostics** terminal for macOS / Linux.
 > Discovers live hosts, MAC addresses, vendor (OUI), open ports and active web services — **plus** runs Wi-Fi, DNS, latency, bandwidth, traceroute, gateway/DHCP, public IP, active connections, **live monitor, MTR with per-hop loss, TLS inspection, captive portal detection, ARP anomaly detection, mDNS/Bonjour discovery, watch/baseline diff, topology export** and **upload/iperf3**.
@@ -9,7 +9,7 @@
   /  |/ / __  / / / / __ `/ ___/ __  /
  / /|  / /_/ / /_/ / /_/ / /  / /_/ /
 /_/ |_/_____/_____/\__,_/_/   \__,_/
-           |___/   v1.3.0
+           |___/   v1.3.1
 ```
 
 ## ✦ Modules (20+)
@@ -250,7 +250,7 @@ python3 -m pip install --user --quiet pytest pytest-mock
 python3 -m pytest tests/ -v
 ```
 
-The suite contains 66 tests across 6 files:
+The suite contains 74 tests across 7 files:
 
 | File | Tests |
 |---|---|
@@ -260,9 +260,10 @@ The suite contains 66 tests across 6 files:
 | `tests/test_cli.py` | Subcommand plumbing, parser, registration (4) |
 | `tests/test_extras.py` | TLS, captive, MTR, ARP, mDNS, topology, IPv6, watch/baseline (18) |
 | `tests/test_termux.py` | **Termux/Linux adapters: ss, /proc/net/route, /proc/net/dev, ping parse, termux-api Wi-Fi (13)** |
+| `tests/test_fixes.py` | **v1.3.1 regressions: mDNS SRV port, iperf3 no-crash, reverse-DNS timeout, IDN, watch RSSI severity (8)** |
 
 ```
-========================== 66 passed in 14.21s ==========================
+========================== 74 passed in 13.87s ==========================
 ```
 
 ## ✦ Notes & etiquette

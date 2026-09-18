@@ -116,6 +116,31 @@ bien la mitad de diagnósticos stdlib):
 - Tests: +`tests/test_termux.py` (13) sobre los parsers puros → **66 en total**.
 - Repo público en GitHub: `angel-clobi/neonscan`.
 
+### Fase 6 — correcciones de bugs (v1.3.1)
+Pase de correctness sobre los diagnósticos (encontrados en revisión a fondo):
+- **mdns**: PTR era tipo 12 y 33 a la vez → la rama SRV estaba muerta y el puerto
+  siempre daba 0. Ahora PTR=12, SRV=33 (puerto/host), A por hostname; slots por
+  *instancia*. `discover_mdns` envía todas las queries y escucha una sola ventana,
+  con `IP_ADD_MEMBERSHIP` + `SO_REUSEPORT` (mejor recepción en Linux/Termux).
+- **tls**: usaba `get_verified_cert_chain` (no existe) → "Chain length" siempre 0.
+  Ahora prueba `get_unverified_chain`/`get_verified_chain` (3.13+) y en 3.9 reporta
+  el peer como 1 con nota.
+- **speed/iperf3**: `measure_iperf3(server=...)` reventaba con `UnboundLocalError`
+  (server_proc sin definir). Inicializado arriba.
+- **watch**: severidad de caída de RSSI invertida para bajas <5 dBm (daba FAIL);
+  y el delta de RSSI **nunca** se generaba (un `float("-67 dBm")` previo lo saltaba).
+  `watch_loop` ahora recolecta y devuelve los diffs.
+- **public_ip**: `setdefaulttimeout` global sin restaurar; prefijo `172.2` marcaba
+  IPs públicas como privadas (ahora `ipaddress.is_private`); `"host"` fuera del hint
+  de proxy (falso positivo).
+- **dns**: quitado el resolver fijo `127.0.0.1` (bajaba el marcador a 6/7 WARN); los
+  locales salen de `/etc/resolv.conf`. Encode tolerante a IDN (punycode).
+- **scanner**: fuga de conexión `http.client` en excepción (try/finally).
+- **traceroute/mtr**: "Reaches target" resolvía el hostname a IP para comparar;
+  limpieza de código muerto (`_HOP_RE`, no-op de severidad).
+- **report**: `datetime.utcnow()` → `datetime.now(timezone.utc)`.
+- Tests: +`tests/test_fixes.py` (8) → **74 en total**.
+
 ## 🚀 Cómo correr
 
 ### Modo normal (en tu Mac / Linux con internet)

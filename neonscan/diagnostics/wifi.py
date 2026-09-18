@@ -397,16 +397,8 @@ def _mhz_to_channel(mhz: int) -> Optional[int]:
 
 
 def _freq_to_channel(ghz: float) -> Optional[int]:
-    """Approximate channel from frequency (works for 2.4/5/6 GHz)."""
-    if 2.4 <= ghz <= 2.5:
-        return int(round((ghz - 2.412) / 0.005)) + 1
-    if 5.0 <= ghz <= 5.9:
-        # crude mapping for 5 GHz
-        return int(ghz * 1000 - 5000)
-    if 6.0 <= ghz <= 7.0:
-        # 6E: ch = (freq_mhz - 5950) / 5 + 1
-        return int((ghz * 1000 - 5950) / 5) + 1
-    return None
+    """Approximate channel from a frequency in GHz (2.4/5/6 GHz)."""
+    return _mhz_to_channel(int(round(ghz * 1000)))
 
 
 # ---------------------------------------------------------------------------

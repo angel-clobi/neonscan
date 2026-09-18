@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import platform
 import re
+import socket
 import subprocess
 from typing import Optional
 
@@ -66,12 +67,17 @@ def measure_traceroute(target: str = "8.8.8.8", max_hops: int = 20, wait_s: int 
         return res
 
     last_reached = next((h for h in reversed(hops) if h["ip"] not in ("?", "*")), None)
-    last_priv = any(h["ip"].startswith(("10.", "192.168.", "172.")) for h in hops)
-    dropped_after = next((h for h in reversed(hops) if all(t == 0 for t in h["times_ms"])), None)
+
+    # Resolve the target so a hostname compares against the final hop's IP.
+    try:
+        target_ip = socket.gethostbyname(target)
+    except OSError:
+        target_ip = target
+    reached = bool(last_reached and last_reached["ip"] == target_ip)
 
     res.add("Hops", str(len(hops)))
-    res.add("Reaches target", "yes" if last_reached and last_reached["ip"] == target else "no",
-            severity=Severity.OK if last_reached and last_reached["ip"] == target else Severity.WARN)
+    res.add("Reaches target", "yes" if reached else "no",
+            severity=Severity.OK if reached else Severity.WARN)
     res.add("Path summary", _summarize_path(hops))
     res.raw = {"target": target, "hops": hops, "raw": cp.stdout}
 

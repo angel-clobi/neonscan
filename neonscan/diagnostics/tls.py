@@ -48,16 +48,21 @@ def inspect_tls(
         cert_der = ssock.getpeercert(binary_form=True)
         cert = ssock.getpeercert() or {}
         cipher = ssock.cipher()
-        # also collect the chain (peer cert + intermediates).  `get_verified_cert_chain` exists
-        # in newer Python only; fall back to peer cert alone.
-        try:
-            chain = ssock.get_verified_cert_chain() or []
-        except (AttributeError, ValueError):
-            chain = []
-        try:
-            unverified_chain = ssock.get_unverified_cert_chain() or []
-        except AttributeError:
-            unverified_chain = []
+        # Collect the chain (peer + intermediates). The API only exists on
+        # Python 3.13+ (`get_unverified_chain` / `get_verified_chain`); older
+        # names never existed. On 3.9 we simply won't have the intermediates.
+        chain = []
+        for _meth in ("get_unverified_chain", "get_verified_chain"):
+            _fn = getattr(ssock, _meth, None)
+            if _fn is None:
+                continue
+            try:
+                _c = _fn()
+            except (ValueError, ssl.SSLError, OSError):
+                _c = None
+            if _c:
+                chain = list(_c)
+                break
         ssock.close()
     except (socket.timeout, OSError, ssl.SSLError) as exc:
         if s is not None:
@@ -130,8 +135,14 @@ def inspect_tls(
                     note=f"SNI={sni!r} not in SAN list")
 
     # chain info
-    chain_count = len(unverified_chain) if unverified_chain else len(chain)
-    res.add("Chain length", str(chain_count))
+    if chain:
+        chain_count = len(chain)
+        res.add("Chain length", str(chain_count))
+    elif cert_der:
+        chain_count = 1
+        res.add("Chain length", "1", note="peer only (full chain needs Python 3.13+)")
+    else:
+        chain_count = 0
 
     # quick fingerprint
     if cert_der:

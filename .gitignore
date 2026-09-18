@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# Test / tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# NeonScan runtime artifacts
+.neonscan/
+neonscan-host-scan.json
+*.mmd
+*.dot
+
+# Vendored deps: ship the wheels (offline artifact), not the extracted tree.
+# `vendor/_lib/` is regenerated from vendor/wheels/ on first run (or via
+# `make install-bundled`) — no need to commit ~500 unpacked third-party files.
+vendor/_lib/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/

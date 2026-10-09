@@ -97,6 +97,7 @@ from neonscan.diagnostics import (
     get_wifi_info,
     list_nearby_aps,
     measure_dns,
+    query_dns_records,
     measure_download,
     measure_upload,
     measure_iperf3,
@@ -177,6 +178,18 @@ def build_parser() -> argparse.ArgumentParser:
     dns_p = sub.add_parser("dns", help="DNS latency across multiple resolvers")
     dns_p.add_argument("name", nargs="?", default="google.com")
 
+    records_p = sub.add_parser(
+        "dns-records", aliases=["records"],
+        help="Query common DNS record types for one domain",
+    )
+    records_p.add_argument("name", help="domain/owner name to query")
+    records_p.add_argument(
+        "--types", default="all",
+        help="comma-separated RR types (default: all common types; e.g. A,MX,TXT,CAA)",
+    )
+    records_p.add_argument("--server", help="DNS resolver IPv4/IPv6 address")
+    records_p.add_argument("--timeout", type=float, default=2.0, help="timeout per query, seconds")
+
     speed_p = sub.add_parser("speed", help="Download bandwidth test (Cloudflare)")
     speed_p.add_argument("--size-mb", type=int, default=10, help="Test blob size (MB)")
 
@@ -231,7 +244,7 @@ def build_parser() -> argparse.ArgumentParser:
     report_p.add_argument("what", choices=[
         "full", "wifi", "ping", "dns", "speed", "traceroute", "routes", "public",
         "connections", "dhcp", "monitor", "aps", "arp", "captive", "mdns",
-        "mtr", "tls", "upload", "iperf3", "topology",
+        "mtr", "tls", "upload", "iperf3", "topology", "dns-records",
     ])
     report_p.add_argument("-o", "--out", required=True)
     report_p.add_argument("--ping-target", default="8.8.8.8")
@@ -346,6 +359,19 @@ def run_ping(args) -> list[DiagResult]:
 
 def run_dns(args) -> list[DiagResult]:
     r = measure_dns(args.name)
+    _print_diag(r)
+    return [r]
+
+
+def run_dns_records(args) -> list[DiagResult]:
+    raw_types = (getattr(args, "types", "all") or "all").strip()
+    record_types = None if raw_types.lower() == "all" else [item.strip() for item in raw_types.split(",")]
+    r = query_dns_records(
+        args.name,
+        record_types=record_types,
+        server=getattr(args, "server", None) or None,
+        timeout=getattr(args, "timeout", 2.0),
+    )
     _print_diag(r)
     return [r]
 
@@ -621,6 +647,7 @@ def run_report(args) -> list[DiagResult]:
         "wifi": lambda: [get_wifi_info()],
         "ping": lambda: [measure_ping(args.ping_target)],
         "dns": lambda: [measure_dns(args.dns_name)],
+        "dns-records": lambda: [query_dns_records(args.dns_name)],
         "speed": lambda: [measure_download(sizes=[args.size_mb * 1_000_000])],
         "traceroute": lambda: [measure_traceroute(args.ping_target)],
         "routes": lambda: [get_routes()],
@@ -675,6 +702,8 @@ SUBCOMMANDS = {
     "mdns": run_mdns,
     "ping": run_ping,
     "dns": run_dns,
+    "dns-records": run_dns_records,
+    "records": run_dns_records,
     "speed": run_speed,
     "upload": run_upload,
     "iperf3": run_iperf3,
@@ -872,6 +901,13 @@ def interactive_mode(args) -> int:
                 _print_diag(measure_ping(Prompt.ask("[bold]target[/]", default="8.8.8.8")))
             elif action == "Z":
                 _print_diag(measure_dns(Prompt.ask("[bold]domain[/]", default="google.com")))
+            elif action == "RR":
+                run_dns_records(argparse.Namespace(
+                    name=Prompt.ask("[bold]domain[/]", default="example.com"),
+                    types=Prompt.ask("[bold]record types (all or comma-separated)[/]", default="all"),
+                    server=Prompt.ask("[bold]DNS resolver IP (blank uses system resolver)[/]", default=""),
+                    timeout=2.0,
+                ))
             elif action == "N":
                 _print_diag(get_public_ip())
             elif action == "T":
@@ -975,7 +1011,8 @@ def interactive_diagnostics_prompt() -> Optional[str]:
     groups = [
         ("1", "Conectividad", [("1", "Diagnóstico completo"), ("2", "Wi-Fi"),
          ("3", "Ping"), ("4", "DNS"), ("5", "IP pública"),
-         ("6", "Gateway y DHCP")], {"1": "D", "2": "W", "3": "P", "4": "Z", "5": "N", "6": "G"}),
+         ("6", "Gateway y DHCP"), ("7", "Consultar registros DNS")],
+         {"1": "D", "2": "W", "3": "P", "4": "Z", "5": "N", "6": "G", "7": "RR"}),
         ("2", "Red local", [("1", "Conexiones activas"), ("2", "Monitor de tráfico"),
          ("3", "Prueba de subida"), ("4", "Prueba iperf3"), ("5", "Portal cautivo"),
          ("6", "Anomalías ARP"), ("7", "Servicios mDNS / Bonjour")],

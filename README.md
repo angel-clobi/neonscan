@@ -21,6 +21,7 @@
 | `dhcp` | Active DHCP lease (server, lease time, DNS) |
 | `public` | Public IP via 3 endpoints, reverse DNS, ISP, proxy hint |
 | `dns [name]` | Multi-resolver latency + correctness |
+| `dns-records <name>` | Query common DNS record types (A, AAAA, MX, TXT, DNSSEC, HTTPS/SVCB, and more) |
 | `ping [target]` | Loss / RTT / jitter over N pings |
 | `traceroute <host>` | One-shot path latency |
 | `mtr <host>` | **MTR** — cycles of traceroute with per-hop loss% |
@@ -144,6 +145,8 @@ python3 neonscan.py                       # open the menu; nothing scans until s
 # One-shot subcommands:
 python3 neonscan.py wifi
 python3 neonscan.py dns
+python3 neonscan.py dns-records example.com
+python3 neonscan.py dns-records example.com --types A,AAAA,MX,TXT,CAA --server 1.1.1.1
 python3 neonscan.py ping 8.8.4.4 -c 6
 python3 neonscan.py speed --size-mb 12
 python3 neonscan.py upload --size-mb 12
@@ -230,6 +233,17 @@ Termux, tapping URLs in terminal output may be disabled by default; add
 `terminal-onclick-url-open=true` to `~/.termux/termux.properties`, then run
 `termux-reload-settings`. NeonScan also prints the full URL so it stays visible
 in terminals without OSC 8 hyperlink support.
+
+`dns-records` queries common record types individually using the system resolver
+(or `--server`), and falls back to Python's standard library when `dig` is not
+installed. Pass `--types A,MX,TXT` to choose specific types; `TYPE<number>` can
+query a numeric type not named by the built-in list. The `ANY` query
+is available explicitly but DNS servers may return only a partial response, so
+it cannot guarantee a complete inventory. DNS also does not provide a general
+way to list every record type or discover all subdomains from a domain name.
+The interactive option is under **Diagnósticos → Conectividad → Consultar
+registros DNS**. On Termux, `dnsutils` provides `dig`, though the built-in
+resolver path works without it.
 
 The environment review detects the operating system and searches `PATH` for
 optional commands such as `ping`, `traceroute`, `openssl`, `iperf3`, and `nmap`.

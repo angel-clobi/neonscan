@@ -8,6 +8,7 @@ from .result import DiagResult, Finding, Severity
 from .wifi import get_wifi_info, list_nearby_aps
 from .ping import measure_ping
 from .dns import measure_dns
+from .dns_records import query_dns_records
 from .speed import (
     measure_download,
     measure_upload,
@@ -55,6 +56,7 @@ __all__ = [
     "list_nearby_aps",
     "measure_ping",
     "measure_dns",
+    "query_dns_records",
     "measure_download",
     "measure_upload",
     "measure_iperf3",

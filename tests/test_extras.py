@@ -290,7 +290,7 @@ def test_new_subcommands_registered():
     spec = importlib.util.spec_from_file_location("ns_entry", Path(__file__).resolve().parent.parent / "neonscan.py")
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
-    expected = {"upload", "iperf3", "mtr", "tls", "arp", "captive", "mdns", "watch", "topology"}
+    expected = {"upload", "iperf3", "mtr", "tls", "arp", "captive", "mdns", "watch", "topology", "dns-records"}
     missing = expected - set(mod.SUBCOMMANDS)
     assert not missing, f"missing subcommands: {missing}"
 

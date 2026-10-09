@@ -197,6 +197,13 @@ fallback as an estimate. IPv4 and IPv6 CIDRs are accepted, with interactive
 sweeps limited to 1,024 addresses. Large IPv6 prefixes such as `/64` must be
 narrowed manually before scanning.
 
+Hostnames are best-effort reverse-DNS/system-name lookups; many home networks
+do not publish PTR records, so `—` is expected for those devices. MAC addresses
+come from the OS neighbor cache (`ip neigh` on Linux/Termux, plus ARP fallbacks)
+and may be unavailable when the OS or access point hides neighbor data. The
+manufacturer is looked up from the MAC's IEEE OUI; it remains `Unknown` when
+there is no MAC, the OUI is unrecognized, or the device uses a randomized MAC.
+
 The quick scan lists open TCP ports and service names inferred from their port
 numbers. A deep scan reports open, closed, and filtered/no-response counts. If
 Nmap is installed, it runs lightweight version probes only against TCP ports

@@ -246,3 +246,66 @@ def test_proc_arp_fallback(monkeypatch, tmp_path):
     by_ip = {e[0]: e[1] for e in entries}
     assert by_ip.get("10.10.10.1") == "AA:BB:CC:DD:EE:FF", entries
     assert by_ip.get("10.10.10.42") == "11:22:33:44:55:66", entries
+
+
+def test_ip_neigh_cache_is_parsed_on_linux_and_termux(monkeypatch):
+    from neonscan import network as netmod
+
+    monkeypatch.setattr(netmod, "IS_DARWIN", False)
+    monkeypatch.setattr(netmod, "IS_LINUX", True)
+
+    def fake_check_output(command, **_kwargs):
+        if command == ["ip", "-4", "neigh", "show"]:
+            return (
+                "192.0.2.1 dev wlan0 lladdr aa:bb:cc:dd:ee:ff REACHABLE\n"
+                "192.0.2.2 dev wlan0 INCOMPLETE\n"
+            )
+        raise FileNotFoundError(command[0])
+
+    monkeypatch.setattr(subprocess, "check_output", fake_check_output)
+    monkeypatch.setattr(netmod, "_read_proc_arp", lambda: [])
+
+    assert netmod._read_arp_table() == [
+        ("192.0.2.1", "AA:BB:CC:DD:EE:FF", "wlan0")
+    ]
+
+
+def test_discovery_refreshes_neighbors_after_tcp_probe(monkeypatch):
+    from neonscan import network as netmod
+
+    neighbor_snapshots = iter([
+        [],
+        [("192.0.2.1", "aa:bb:cc:dd:ee:ff", "wlan0")],
+    ])
+    monkeypatch.setattr(netmod, "ping_sweep", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(netmod, "_read_arp_table", lambda: next(neighbor_snapshots))
+    monkeypatch.setattr(
+        netmod, "_tcp_probe_once", lambda ip, _port: ip == "192.0.2.1"
+    )
+
+    alive, methods, neighbors = netmod.discover_alive_ips(
+        "192.0.2.0/30", max_workers=2, tcp_ports=(80,)
+    )
+
+    assert alive == ["192.0.2.1"]
+    assert methods["192.0.2.1"] == ["tcp/80", "neighbor-cache"]
+    assert neighbors["192.0.2.1"] == ("aa:bb:cc:dd:ee:ff", "wlan0")
+
+
+def test_ui_applies_neighbor_cache_to_missing_host_identity():
+    from neonscan.network import Host
+    from neonscan.ui import _apply_neighbor_cache
+
+    host = Host(ip="192.0.2.1")
+
+    class FakeOUICache:
+        def lookup(self, mac):
+            assert mac == "AA:BB:CC:DD:EE:FF"
+            return "Example Networks"
+
+    _apply_neighbor_cache(
+        [host], [(host.ip, "aa:bb:cc:dd:ee:ff", "wlan0")], FakeOUICache()
+    )
+
+    assert host.mac == "AA:BB:CC:DD:EE:FF"
+    assert host.manufacturer == "Example Networks"

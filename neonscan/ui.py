@@ -25,7 +25,16 @@ from rich.style import Style
 from rich.text import Text
 
 from .banner import render_banner, render_intro_panel
-from .network import IS_TERMUX, Host, _network_hosts, detect_network, discover_alive_ips
+from .network import (
+    IS_TERMUX,
+    Host,
+    _network_hosts,
+    _normalize_mac,
+    _read_arp_table,
+    _reverse_dns,
+    detect_network,
+    discover_alive_ips,
+)
 from .scanner import (
     QUICK_WEB_PORTS,
     PortResult,
@@ -423,7 +432,6 @@ def discover_with_progress(
     """
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
-    from .network import _normalize_mac, _reverse_dns
     from .oui import OUICache
 
     _net, candidates = _network_hosts(subnet)
@@ -505,7 +513,37 @@ def discover_with_progress(
                     done += 1
                     progress.update(task, completed=done)
 
+    # The web probes above can resolve ARP entries after host discovery. Refresh
+    # missing MAC/vendor fields before rendering the table to pick those up.
+    if hosts:
+        _apply_neighbor_cache(hosts, _read_arp_table(), cache)
+    if hosts and (
+        any(not host.mac for host in hosts)
+        or any(host.manufacturer in ("", "Unknown") for host in hosts)
+        or any(not host.hostname for host in hosts)
+    ):
+        mac_count = sum(bool(host.mac) for host in hosts)
+        hostname_count = sum(bool(host.hostname) for host in hosts)
+        vendor_count = sum(host.manufacturer not in ("", "Unknown") for host in hosts)
+        console.print(
+            f"[dim]Identidad recuperada: MAC {mac_count}/{len(hosts)} · "
+            f"fabricante {vendor_count}/{len(hosts)} · hostname {hostname_count}/{len(hosts)}. "
+            "El hostname requiere DNS inverso o resolución local; el fabricante requiere "
+            "una MAC y un prefijo OUI reconocible.[/]"
+        )
+
     return hosts, ports_by_host
+
+
+def _apply_neighbor_cache(hosts: list[Host], entries, oui_cache) -> None:
+    """Fill missing MAC/vendor data from the neighbor cache after active probes."""
+    hosts_by_ip = {host.ip: host for host in hosts}
+    for ip, mac, _iface in entries:
+        host = hosts_by_ip.get(ip)
+        if host is None or host.mac or not mac:
+            continue
+        host.mac = _normalize_mac(mac)
+        host.manufacturer = oui_cache.lookup(host.mac)
 
 
 def deep_scan_with_progress(host: Host, top: int = 200) -> list[PortResult]:

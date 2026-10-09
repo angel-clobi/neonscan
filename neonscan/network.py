@@ -350,6 +350,19 @@ def discover_alive_ips(
                 if progress_cb:
                     progress_cb(len(candidates) + done, len(candidates) + len(jobs), ip)
 
+    # TCP probes can populate the neighbor cache after the initial ICMP sweep.
+    # Read it again before returning so discovered TCP-only hosts get their MAC.
+    if net.version == 4:
+        for ip, mac, iface in _read_arp_table():
+            try:
+                if ip in candidate_set and ipaddress.ip_address(ip) in net and mac:
+                    arp.setdefault(ip, (mac, iface))
+                    methods.setdefault(ip, [])
+                    if "neighbor-cache" not in methods[ip]:
+                        methods[ip].append("neighbor-cache")
+            except ValueError:
+                continue
+
     alive = sorted(
         methods,
         key=lambda value: (ipaddress.ip_address(value).version, int(ipaddress.ip_address(value))),
@@ -372,36 +385,57 @@ _ARP_LINE_LINUX = re.compile(
 _ARP_LINE_WINDOWS = re.compile(
     r"\s*(\d+\.\d+\.\d+\.\d+)\s+([0-9a-fA-F-]+)\s+(\w+)"
 )
+_IP_NEIGH_LINE = re.compile(
+    r"^\s*(\d+\.\d+\.\d+\.\d+)\s+dev\s+(\S+).*?\blladdr\s+"
+    r"([0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5})\b"
+)
 
 
 def _read_arp_table() -> list[tuple[str, str, str]]:
     """Return [(ip, mac, iface), ...] from the system ARP cache.
 
-    On macOS we shell out to `arp -an`.  On Linux we try `arp -an` first; if
-    not available (e.g. Termux) we fall back to /proc/net/arp.
+    Linux/Termux may expose neighbors through `ip neigh` even when `arp` or
+    `/proc/net/arp` is unavailable, so merge all supported cache sources.
     """
     if IS_DARWIN or IS_LINUX:
-        # First: try the standard CLI tool.
+        entries: list[tuple[str, str, str]] = []
+        if IS_LINUX:
+            try:
+                out = subprocess.check_output(
+                    ["ip", "-4", "neigh", "show"],
+                    stderr=subprocess.DEVNULL, text=True, timeout=4,
+                )
+                for line in out.splitlines():
+                    match = _IP_NEIGH_LINE.search(line)
+                    if match:
+                        ip, iface, mac = match.groups()
+                        entries.append((ip, _normalize_mac(mac), iface))
+            except (subprocess.CalledProcessError, OSError, subprocess.SubprocessError):
+                pass
+
+        # Also parse the platform's traditional ARP output.
         try:
             out = subprocess.check_output(
                 ["arp", "-an"], stderr=subprocess.DEVNULL, text=True, timeout=4
             )
-            entries: list[tuple[str, str, str]] = []
             for line in out.splitlines():
                 m = _ARP_LINE_DARWIN.search(line) if IS_DARWIN else _ARP_LINE_LINUX.search(line)
                 if m:
                     ip, mac, iface = m.group(1), m.group(2), m.group(3)
                     entries.append((ip, mac, iface))
-            if entries:
-                return entries
-        except (subprocess.CalledProcessError, OSError):
+        except (subprocess.CalledProcessError, OSError, subprocess.SubprocessError):
             pass
 
-        # Fallback: /proc/net/arp (Android/Termux, some Linux containers).
-        entries = _read_proc_arp()
-        if entries:
-            return entries
-        return []
+        # Last Linux fallback: procfs, when Android/container permissions allow it.
+        if IS_LINUX:
+            entries.extend(_read_proc_arp())
+
+        # Keep the first usable address; incomplete entries carry no MAC.
+        neighbors: dict[str, tuple[str, str]] = {}
+        for ip, mac, iface in entries:
+            if mac and mac.lower() != "incomplete":
+                neighbors.setdefault(ip, (_normalize_mac(mac), iface))
+        return [(ip, mac, iface) for ip, (mac, iface) in neighbors.items()]
 
     # Windows
     try:

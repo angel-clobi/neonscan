@@ -148,6 +148,24 @@ def test_parse_termux_conninfo_bad_json():
     assert wifi._parse_termux_conninfo("not json") is None
 
 
+def test_termux_wifi_missing_command_gives_pkg_specific_guidance(monkeypatch):
+    monkeypatch.setattr(wifi.shutil, "which", lambda _command: None)
+    result = wifi._wifi_termux(wifi.DiagResult(title="Wi-Fi link"))
+    assert not result.ok
+    assert "pkg install termux-api" in result.error
+    assert "app Android" in result.error
+
+
+def test_termux_wifi_api_failure_does_not_fall_through_to_iwconfig(monkeypatch):
+    monkeypatch.setattr(wifi, "_is_termux", lambda: True)
+    monkeypatch.setattr(wifi.shutil, "which", lambda command: "/usr/bin/" + command)
+    monkeypatch.setattr(wifi, "_run", lambda *_args, **_kwargs: (1, "", "permission denied"))
+    result = wifi.get_wifi_info()
+    assert not result.ok
+    assert "instalado pero no pudo obtener datos" in result.error
+    assert "permission denied" in result.error
+
+
 def test_parse_termux_scaninfo():
     js = (
         '[{"bssid":"aa:bb:cc:dd:ee:ff","frequency_mhz":2437,"rssi":-40,"ssid":"A"},'

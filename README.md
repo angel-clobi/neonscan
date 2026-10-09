@@ -87,8 +87,8 @@ pkg install python iproute2 iputils traceroute openssl-tool
 #    lets the TLS module verify certs. All optional-but-recommended:
 pkg install lsof nmap netcat-openbsd dnsutils
 
-# 3. Wi-Fi info needs the Termux:API bridge (install the Termux:API *app*
-#    from F-Droid too, then):
+# 3. Wi-Fi info needs both parts: install the Termux:API *app* from the same
+#    source as Termux, and install the command wrappers inside Termux:
 pkg install termux-api
 
 # 4. Copy the project (git clone, scp, Termux storage, …):
@@ -109,8 +109,11 @@ cd neonscan && bash setup-termux.sh
 ```
 
 It reports exactly which tools are present, never aborts on a missing optional
-package, and reminds you that `wifi`/`aps` need the Termux:API app plus
-`pkg install termux-api`.
+package, and reminds you that `wifi`/`aps` need the Termux:API app and the
+separate `termux-api` package inside Termux. If the command exists but Wi-Fi
+data cannot be read, check the add-on app's Android permissions and location
+services; NeonScan now displays the API error instead of suggesting the package
+is missing.
 
 **What works where on Termux**
 

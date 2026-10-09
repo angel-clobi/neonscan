@@ -47,8 +47,24 @@ def environment_report() -> dict:
 
     if termux:
         install = "pkg install iputils iproute2 traceroute openssl-tool lsof iperf3 dnsutils termux-api"
-        wifi = shutil.which("termux-wifi-connectioninfo") and shutil.which("termux-wifi-scaninfo")
-        wifi_note = "Termux:API disponible" if wifi else "Wi-Fi requiere la app Termux:API y `pkg install termux-api`"
+        connection = shutil.which("termux-wifi-connectioninfo")
+        scan = shutil.which("termux-wifi-scaninfo")
+        if connection and scan:
+            wifi_note = (
+                "Comandos Wi-Fi de Termux:API encontrados. Si la consulta falla, "
+                "revisa permisos de la app Android Termux:API y ubicación del teléfono."
+            )
+        else:
+            missing_wifi = [name for name, path in (
+                ("termux-wifi-connectioninfo", connection),
+                ("termux-wifi-scaninfo", scan),
+            ) if not path]
+            wifi_note = (
+                f"Falta(n) {', '.join(missing_wifi)} en PATH: instala los comandos "
+                "con `pkg install termux-api`. La app Android Termux:API es un "
+                "complemento separado y requiere permisos; tener la app instalada "
+                "no instala estos comandos dentro de Termux."
+            )
         system_name = "Android / Termux"
     elif system == "Linux":
         install = "Debian/Ubuntu: sudo apt install iputils-ping iproute2 traceroute openssl lsof iperf3 dnsutils"

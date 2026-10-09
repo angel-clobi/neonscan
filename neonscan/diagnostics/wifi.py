@@ -37,12 +37,36 @@ _AIRPORT = (
 
 def termux_wifi_connectioninfo() -> Optional[dict]:
     """Return the parsed `termux-wifi-connectioninfo` JSON, or None."""
-    if not shutil.which("termux-wifi-connectioninfo"):
-        return None
-    rc, stdout, _ = _run(["termux-wifi-connectioninfo"], timeout=6.0)
+    data, _error = _termux_wifi_connectioninfo_result()
+    return data
+
+
+def _termux_wifi_connectioninfo_result() -> tuple[Optional[dict], Optional[str]]:
+    """Return API data and an actionable error while preserving command output."""
+    command = "termux-wifi-connectioninfo"
+    executable = shutil.which(command)
+    if not executable:
+        return None, (
+            f"No se encontró `{command}` en PATH. Instala el paquete de comandos "
+            "dentro de Termux con `pkg install termux-api`. La app Android "
+            "Termux:API es un complemento separado."
+        )
+
+    rc, stdout, stderr = _run([executable], timeout=10.0)
     if rc != 0 or not stdout.strip():
-        return None
-    return _parse_termux_conninfo(stdout)
+        detail = (stderr or stdout).strip()
+        message = (
+            f"`{command}` está instalado pero no pudo obtener datos. Comprueba "
+            "que la app Android Termux:API esté instalada desde la misma fuente "
+            "que Termux, tenga permisos de ubicación/dispositivos cercanos y "
+            "que la ubicación del teléfono esté activada."
+        )
+        return None, f"{message} Detalle: {detail[:300]}" if detail else message
+
+    data = _parse_termux_conninfo(stdout)
+    if data is None:
+        return None, f"`{command}` respondió, pero su salida no es JSON válido: {stdout.strip()[:200]}"
+    return data, None
 
 
 def _parse_termux_conninfo(stdout: str) -> Optional[dict]:
@@ -54,9 +78,10 @@ def _parse_termux_conninfo(stdout: str) -> Optional[dict]:
 
 
 def _wifi_termux(res: DiagResult) -> Optional[DiagResult]:
-    data = termux_wifi_connectioninfo()
-    if not data:
-        return None
+    data, error = _termux_wifi_connectioninfo_result()
+    if data is None:
+        res.error = error or "Termux:API no devolvió información Wi-Fi."
+        return res
     ssid = (data.get("ssid") or "").strip('"') or "—"
     if ssid in ("<unknown ssid>", "0x", ""):
         ssid = "—"
@@ -160,9 +185,7 @@ def get_wifi_info() -> DiagResult:
 
     # Termux (Android): use the termux-api bridge before anything else.
     if _is_termux():
-        termux_res = _wifi_termux(res)
-        if termux_res is not None:
-            return termux_res
+        return _wifi_termux(res)
 
     if IS_DARWIN and _AIRPORT.exists():
         rc, info_stdout, _ = _run([str(_AIRPORT), "-I"])
@@ -299,13 +322,7 @@ def get_wifi_info() -> DiagResult:
         res.raw = {"ssid": ssid, "bssid": bssid, "freq": freq, "rssi": rssi, "tool": "iwconfig"}
         return res
 
-    if _is_termux():
-        res.error = (
-            "No Wi-Fi info — install Termux:API (app + `pkg install termux-api`) "
-            "for `termux-wifi-connectioninfo`."
-        )
-    else:
-        res.error = "No Wi-Fi tool available (need 'airport'/system_profiler on macOS or 'iwconfig' on Linux)."
+    res.error = "No Wi-Fi tool available (need 'airport'/system_profiler on macOS or 'iwconfig' on Linux)."
     return res
 
 

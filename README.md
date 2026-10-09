@@ -1,4 +1,4 @@
-# ⚡ NeonScan v1.3.1
+# ⚡ NeonScan v1.4.0
 
 > Cyberpunk-styled, interactive **local-network reconnaissance + diagnostics** terminal for macOS / Linux.
 > Discovers live hosts, MAC addresses, vendor (OUI), open ports and active web services — **plus** runs Wi-Fi, DNS, latency, bandwidth, traceroute, gateway/DHCP, public IP, active connections, **live monitor, MTR with per-hop loss, TLS inspection, captive portal detection, ARP anomaly detection, mDNS/Bonjour discovery, watch/baseline diff, topology export** and **upload/iperf3**.
@@ -34,10 +34,11 @@
 | `captive` | **Captive portal detection** (4 URL probes) |
 | `mdns` | **mDNS/Bonjour** service discovery |
 | `tls <host>` | **TLS cert inspection** (subject, issuer, expiry, cipher, fingerprint) |
-| `topology [--format]` | **Export topology** as Mermaid or Graphviz DOT |
+| `topology [--format]` | Export a **schematic subnet view** as Mermaid or Graphviz DOT |
 | `watch [--save]` | **Save / diff against baseline** |
 | `full` | Run all of the above and dump a report |
-| `net / scan` | Original host discovery |
+| `net / scan` | Local host discovery using ICMP, cached neighbors, and common TCP probes |
+| `udp <host>` | Read-only probes for DNS, NTP, SNMP, and SSDP on one explicit target |
 | `report <module>` | Save any single module to Markdown/JSON |
 
 ## ✦ Install
@@ -49,8 +50,8 @@ cd neonscan
 python3 -m pip install -r requirements.txt   # only 'rich' is required
 
 # Optional for richer diagnostics:
-brew install iperf3 dig                      # macOS
-sudo apt install iperf3 traceroute lsof      # Debian/Ubuntu
+brew install iperf3 bind nmap                 # macOS
+sudo apt install iperf3 traceroute lsof nmap # Debian/Ubuntu
 ```
 
 ### Self-contained (works offline, on Termux, no internet at runtime)
@@ -150,6 +151,7 @@ python3 neonscan.py iperf3                 # local self-loop; needs iperf3 binar
 python3 neonscan.py traceroute 1.1.1.1
 python3 neonscan.py mtr 8.8.8.8 --cycles 3
 python3 neonscan.py tls google.com
+python3 neonscan.py udp 192.168.1.1 --ports 53,123
 python3 neonscan.py captive
 python3 neonscan.py arp
 python3 neonscan.py mdns
@@ -170,7 +172,7 @@ Flags:
 --offline              # don't download OUI; use bundled list only
 --update-oui           # force re-download of the IEEE OUI file
 --no-banner            # skip ASCII splash
---subnet CIDR          # override the auto-detected /24
+--subnet CIDR          # override the detected IPv4/IPv6 prefix
 --cache-dir DIR        # where to cache oui.txt (default ~/.neonscan/cache)
 --debug                # verbose logging
 ```
@@ -179,17 +181,42 @@ Flags:
 
 Starting `python3 neonscan.py` opens the main menu without scanning the network.
 Choose **1** to start a local-network scan, **2** to open diagnostic categories,
-**3** to change the target subnet, **5** to inspect the current environment and
-available optional commands, or **0** to exit. After a scan, the menu also offers
-host-specific port scans and export. After running a diagnostic or host action,
+**3** to change the target subnet, **5** to inspect the current environment,
+**6** to scan a detected IPv6 prefix when available, or **0** to exit. After a
+scan, the menu also offers host-specific port scans and export. After running a diagnostic or host action,
 NeonScan stays in that section so you can run another action without navigating
 from the beginning. Menus use numbered choices and short category screens to fit
 narrow terminal windows such as Termux on Android. Press `Ctrl-C` during an
 operation to cancel it and return to the current section.
 
-Scan results list each open port and its detected service. Confirmed HTTP/HTTPS
-ports and their URLs are clickable in terminals that support hyperlinks. In
-the host tools menu, choose **Abrir servicio web en navegador** to select a
+Host discovery combines ICMP replies, the local neighbor cache, and TCP probes
+on ports 22, 80, and 443, so devices that ignore ping can still appear. The
+export records which signal found each host. NeonScan reads the interface's
+actual IPv4 prefix where the OS exposes it; otherwise the banner marks the
+fallback as an estimate. IPv4 and IPv6 CIDRs are accepted, with interactive
+sweeps limited to 1,024 addresses. Large IPv6 prefixes such as `/64` must be
+narrowed manually before scanning.
+
+The quick scan lists open TCP ports and service names inferred from their port
+numbers. A deep scan reports open, closed, and filtered/no-response counts. If
+Nmap is installed, it runs lightweight version probes only against TCP ports
+already found open; it does not run NSE scripts or OS detection. Install Nmap
+as an optional package (`nmap` in Termux) for product/version details. Without
+it, protocol and version identification is limited and the port label remains
+a guess. The `udp` command probes only DNS (53), NTP (123), SNMP (161), and
+SSDP (1900) by default. UDP silence is shown as `open|filtered`, since silence
+cannot confirm whether a service is open.
+
+The host tools menu can save an inventory snapshot or compare the current scan
+with the last saved one. Saving is opt-in; snapshots containing IPs, MACs,
+hostnames, and observed ports live under `~/.neonscan/scans/` and are not
+uploaded. Port changes are compared only where both snapshots checked that
+protocol and port, so an unscanned port is not reported as closed. The topology
+export is a schematic view of the gateway, this device, and discovered subnet
+hosts. It does not reveal switch connections or physical network paths.
+
+Confirmed HTTP/HTTPS ports and their URLs are clickable in terminals that
+support hyperlinks. In the host tools menu, choose **Abrir servicio web en navegador** to select a
 detected endpoint and launch it with the system browser. In macOS Terminal.app,
 use `⌘`-click on the visible URL; that app does not handle OSC 8 links. In
 Termux, tapping URLs in terminal output may be disabled by default; add
@@ -198,15 +225,18 @@ Termux, tapping URLs in terminal output may be disabled by default; add
 in terminals without OSC 8 hyperlink support.
 
 The environment review detects the operating system and searches `PATH` for
-optional commands such as `ping`, `traceroute`, `openssl`, and `iperf3`. It lists
+optional commands such as `ping`, `traceroute`, `openssl`, `iperf3`, and `nmap`.
+It lists
 available fallbacks and platform-specific install suggestions. It never installs
 system packages automatically; Python's `rich` UI dependency is bundled in
 `vendor/wheels/` and bootstrapped locally.
 
 The interactive scanner accepts subnets with up to 1,024 usable addresses to
 avoid accidentally scheduling an impractically large sweep on a phone. Choose a
-narrower CIDR to scan a larger network in sections. Pass `--offline` to prevent
-the OUI vendor database from being downloaded when a scan is selected.
+narrower CIDR to scan a larger network in sections. The main menu exposes
+detected IPv6 prefixes; if a prefix is too broad, it asks for a narrower CIDR.
+Pass `--offline` to prevent the OUI vendor database from being downloaded when
+a scan is selected.
 
 Explicit one-shot commands remain available when you want to run a specific
 operation directly, for example `python3 neonscan.py net` or
@@ -218,6 +248,7 @@ operation directly, for example `python3 neonscan.py net` or
   [2] Diagnósticos
   [3] Cambiar subred objetivo
   [5] Revisar entorno y dependencias
+  [6] Escanear IPv6 detectado (si está disponible)
   [0] Salir
 ```
 
@@ -272,8 +303,8 @@ operation directly, for example `python3 neonscan.py net` or
 graph LR
   10_10_10_1[('10.10.10.1')]                           # gateway
   10_10_10_3[('10.10.10.3')]                           # this host
-  10_10_10_1 --- 10_10_10_3
-  10_10_10_3 --- 10_10_10_42[('laptop')]               # neighbor
+  10_10_10_1 -. default route .- 10_10_10_3
+  10_10_10_3 -. discovered in subnet .- 10_10_10_42[('laptop')]
   10_10_10_1 -.- 8_8_8_8[('DNS · 8.8.8.8')]
 ```
 

@@ -72,12 +72,16 @@ def render_intro_panel(console: Console, network_info: dict) -> Panel:
     body.append("user@neonscan.local\n", style=NEON_GREEN)
     body.append("SUBNET        ", style=f"{NEON_PINK} bold")
     body.append(f"{network_info.get('subnet', 'unknown')}\n", style=NEON_CYAN)
+    body.append("PREFIX_SOURCE ", style=f"{NEON_PINK} bold")
+    body.append(f"{network_info.get('subnet_method', 'not reported')}\n", style=NEON_YELLOW)
+    ipv6_subnets = network_info.get("ipv6_subnets", [])
+    if ipv6_subnets:
+        body.append("IPv6_PREFIXES  ", style=f"{NEON_PINK} bold")
+        body.append(f"{', '.join(ipv6_subnets)}\n", style=NEON_CYAN)
     body.append("LOCAL_IP      ", style=f"{NEON_PINK} bold")
     body.append(f"{network_info.get('local_ip', 'unknown')}\n", style=NEON_CYAN)
     body.append("INTERFACE     ", style=f"{NEON_PINK} bold")
     body.append(f"{network_info.get('interface', 'unknown')}\n", style=NEON_CYAN)
-    body.append("UPTIME_UPLINK ", style=f"{NEON_PINK} bold")
-    body.append("stable\n", style=NEON_GREEN)
     body.append("MODE          ", style=f"{NEON_PINK} bold")
     body.append("PASSIVE_RECON + ACTIVE_PROBE\n", style=NEON_YELLOW)
 

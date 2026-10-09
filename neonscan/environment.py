@@ -27,6 +27,7 @@ DEPENDENCIES = (
     Dependency("Conexiones", ("ss", "lsof", "netstat"), "Listado de sockets y puertos locales", "Se probarán alternativas instaladas"),
     Dependency("Traceroute", ("traceroute", "tracepath"), "Traceroute y MTR", "La función reportará que falta el comando"),
     Dependency("OpenSSL", ("openssl",), "Detalles ampliados de certificados TLS", "Python conserva la conexión TLS básica"),
+    Dependency("Nmap", ("nmap",), "Detección ligera de servicio/versión en los puertos TCP abiertos", "Se muestran nombres de servicio inferidos por número de puerto"),
     Dependency("iperf3", ("iperf3",), "Pruebas de ancho de banda dentro de la LAN", "Las pruebas HTTP de velocidad siguen disponibles"),
     Dependency("DNS CLI", ("dig", "nslookup"), "Consultas DNS externas opcionales", "NeonScan tiene consulta DNS propia"),
 )
@@ -46,7 +47,7 @@ def environment_report() -> dict:
         entries.append({"dependency": dependency, "found": found})
 
     if termux:
-        install = "pkg install iputils iproute2 traceroute openssl-tool lsof iperf3 dnsutils termux-api"
+        install = "pkg install iputils iproute2 traceroute openssl-tool lsof iperf3 dnsutils termux-api nmap"
         connection = shutil.which("termux-wifi-connectioninfo")
         scan = shutil.which("termux-wifi-scaninfo")
         if connection and scan:
@@ -67,11 +68,11 @@ def environment_report() -> dict:
             )
         system_name = "Android / Termux"
     elif system == "Linux":
-        install = "Debian/Ubuntu: sudo apt install iputils-ping iproute2 traceroute openssl lsof iperf3 dnsutils"
+        install = "Debian/Ubuntu: sudo apt install iputils-ping iproute2 traceroute openssl lsof iperf3 dnsutils nmap"
         wifi_note = "Wi-Fi puede depender de permisos y utilidades del sistema"
         system_name = f"Linux ({platform.release()})"
     elif system == "Darwin":
-        install = "Opcional con Homebrew: brew install iperf3 bind"
+        install = "Opcional con Homebrew: brew install iperf3 bind nmap"
         wifi_note = "macOS puede requerir permisos de ubicación o sudo para datos Wi-Fi"
         system_name = f"macOS ({platform.mac_ver()[0] or platform.release()})"
     else:

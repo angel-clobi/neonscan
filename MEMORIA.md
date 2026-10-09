@@ -29,9 +29,9 @@ neonscan/                   ← raíz del proyecto
 ├── neonscan/               paquete Python
 │   ├── theme.py            paleta neón + rich theme
 │   ├── banner.py           ASCII art + intro panel
-│   ├── network.py          ip/subnet/ping sweep/ARP/+ /proc/net/arp fallback
+│   ├── network.py          CIDR IPv4/IPv6, multi-signal discovery, ARP cache
 │   ├── oui.py              caché IEEE OUI + descarga on first run
-│   ├── scanner.py          TCP-connect scan + HTTP title grab
+│   ├── scanner.py          TCP/UDP states, HTTP metadata, optional Nmap versions
 │   ├── ui.py               tablas cyberpunk + menú + prompts
 │   ├── data/fallback_oui.py  ~900 vendors offline
 │   └── diagnostics/        17 módulos
@@ -140,6 +140,27 @@ Pase de correctness sobre los diagnósticos (encontrados en revisión a fondo):
   limpieza de código muerto (`_HOP_RE`, no-op de severidad).
 - **report**: `datetime.utcnow()` → `datetime.now(timezone.utc)`.
 - Tests: +`tests/test_fixes.py` (8) → **74 en total**.
+
+### Fase 7 — calidad de descubrimiento y estados de puertos (v1.4.0)
+- **CIDR real**: leer prefijos de Linux/Termux, macOS y Windows; marcar el /24
+  estimado como tal cuando el sistema no exponga la máscara. Mostrar prefijos IPv6
+  detectados y limitar los barridos interactivos a 1,024 direcciones.
+- **Descubrimiento multi-señal**: combinar ICMP, caché vecinal IPv4 y conexiones
+  TCP a 22/80/443; exportar el método que encontró cada host. Ajustar concurrencia
+  de escaneo profundo para móviles.
+- **Estados TCP**: preservar open/closed/filtered/error, presentar conteos y
+  dejar los puertos cerrados como resultados solo en el escaneo profundo.
+- **UDP selectivo**: sondas de solo lectura para DNS/NTP/SNMP/SSDP sobre el host
+  que el usuario elija; el silencio se informa como `open|filtered`.
+- **Versiones opcionales**: Nmap `-sV --version-light` solo sobre puertos TCP ya
+  encontrados abiertos; sin NSE ni detección de sistema operativo. Las etiquetas
+  por número de puerto se identifican como aproximadas.
+- Menú de selección IPv6, formato de URLs IPv6 y salida JSON con protocolo,
+  estado, motivo de la sonda y evidencia de descubrimiento.
+- **Inventario opt-in**: guardar snapshots locales bajo `~/.neonscan/scans/` y
+  comparar equipos, datos de identidad y cambios de puertos entre escaneos.
+- **Topología**: marcar Mermaid/DOT como vistas esquemáticas de subred; no
+  afirmar rutas de switches o enlaces físicos que no se detectan.
 
 ## 🚀 Cómo correr
 

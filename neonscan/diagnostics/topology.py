@@ -1,4 +1,4 @@
-"""Visual topology export (Mermaid / Graphviz) + IPv6 privacy-address heuristic."""
+"""Schematic host/gateway export (Mermaid / Graphviz) + IPv6 privacy heuristic."""
 
 from __future__ import annotations
 
@@ -18,34 +18,47 @@ def topology_to_mermaid(
     hosts: list[dict],
     dns_servers: list[str] = (),
 ) -> str:
-    """Return a Mermaid `graph LR` block representing the network.
+    """Return a schematic subnet view, not an inferred physical topology.
 
-    Layout: gateway → local_ip → host1, host2, …
+    Hosts are shown as discovered in the subnet. Physical switches and paths
+    cannot be inferred without protocols such as LLDP or managed-switch data.
     """
-    lines = ["graph LR"]
+    lines = [
+        "graph LR",
+        "  %% Schematic only: physical links and switch paths are not inferred.",
+    ]
     gw = _safe_id(gateway or "gw")
     me = _safe_id(local_ip or "me")
-    lines.append(f"  {gw}[('{gateway or 'gateway'}')]")
-    lines.append(f"  {me}[('{local_ip or 'this host'}')]")
-    lines.append(f"  {gw} --- {me}")
+    lines.append(f"  {gw}[('{_mermaid_label(gateway or 'gateway')}')]")
+    lines.append(f"  {me}[('{_mermaid_label(local_ip or 'this host')}')]")
+    lines.append(f"  {gw} -. default route .- {me}")
 
     for host in hosts:
         ip = host.get("ip", "")
-        label = host.get("hostname") or host.get("manufacturer") or ip
+        label = _mermaid_label(host.get("hostname") or host.get("manufacturer") or ip)
         nid = _safe_id(ip)
-        lines.append(f"  {me} --- {nid}[('{label}')]")
+        lines.append(f"  {me} -. discovered in subnet .- {nid}[('{label}')]")
 
     for d in dns_servers:
         if not d:
             continue
         did = _safe_id(d)
-        lines.append(f"  {gw} -.- {did}[('DNS · {d}')]")
+        lines.append(f"  {gw} -.- {did}[('DNS · {_mermaid_label(d)}')]")
 
     return "\n".join(lines)
 
 
 def _safe_id(s: str) -> str:
     return re.sub(r"[^A-Za-z0-9]", "_", (s or "").strip() or "node")
+
+
+def _mermaid_label(value: str) -> str:
+    """Keep discovered host labels from changing Mermaid diagram structure."""
+    return re.sub(r"[\r\n\[\]{}()|<>`'\"]", " ", str(value)).strip()[:80] or "host"
+
+
+def _dot_escape(value: str) -> str:
+    return str(value).replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
 
 
 def export_topology(
@@ -57,6 +70,7 @@ def export_topology(
 ) -> DiagResult:
     """Wrap topology export as a DiagResult; write nothing here."""
     res = DiagResult(title=f"Topology · {fmt}")
+    res.add("Scope", "Schematic subnet view; switch paths and physical links are not inferred")
     if fmt == "mermaid":
         text = topology_to_mermaid(local_ip, gateway, hosts, list(dns_servers))
         res.add("Format", "mermaid `graph LR`")
@@ -74,25 +88,32 @@ def export_topology(
 
 
 def topology_to_dot(local_ip: str, gateway: str, hosts: list[dict], dns_servers: list[str] = ()) -> str:
-    lines = ["digraph G {", "  rankdir=LR;"]
+    lines = [
+        "digraph G {",
+        "  rankdir=LR;",
+        '  label="Schematic only: physical links and switch paths are not inferred";',
+        "  labelloc=t;",
+    ]
     if gateway:
-        lines.append(f'  "{gateway}" [label="{gateway}\\ngateway", shape=triangle];')
+        safe_gateway = _dot_escape(gateway)
+        lines.append(f'  "{safe_gateway}" [label="{safe_gateway}\\ngateway", shape=triangle];')
     if local_ip:
-        lines.append(f'  "{local_ip}" [label="this host", shape=doublecircle];')
+        safe_local = _dot_escape(local_ip)
+        lines.append(f'  "{safe_local}" [label="this host", shape=doublecircle];')
         if gateway:
-            lines.append(f'  "{gateway}" -> "{local_ip}";')
+            lines.append(f'  "{_dot_escape(gateway)}" -> "{safe_local}" [style=dashed, label="default route"];')
     for host in hosts:
         ip = host.get("ip", "")
         label = host.get("hostname") or host.get("manufacturer") or ip
-        lines.append(f'  "{ip}" [label="{label}"];')
+        lines.append(f'  "{_dot_escape(ip)}" [label="{_dot_escape(label)}"];')
         if local_ip:
-            lines.append(f'  "{local_ip}" -> "{ip}";')
+            lines.append(f'  "{_dot_escape(local_ip)}" -> "{_dot_escape(ip)}" [style=dashed, label="discovered in subnet"];')
     for d in dns_servers:
         if not d:
             continue
-        lines.append(f'  "{d}" [label="DNS {d}", shape=box];')
+        lines.append(f'  "{_dot_escape(d)}" [label="DNS {_dot_escape(d)}", shape=box];')
         if gateway:
-            lines.append(f'  "{d}" -> "{gateway}" [style=dashed, dir=back];')
+            lines.append(f'  "{_dot_escape(d)}" -> "{_dot_escape(gateway)}" [style=dashed, dir=back];')
     lines.append("}")
     return "\n".join(lines)
 

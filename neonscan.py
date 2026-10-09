@@ -27,6 +27,7 @@ import logging
 import os
 import sys
 from pathlib import Path
+from typing import Optional
 
 # ---------------------------------------------------------------------------
 # Vendor / wheel bootstrap (must happen before any third-party imports)
@@ -120,7 +121,7 @@ from neonscan.diagnostics import (
 from neonscan import network
 from neonscan.environment import environment_report, render_environment_report
 from neonscan.network import detect_network
-from neonscan.theme import NEON_MAGENTA, NEON_PINK, NEON_PURPLE
+from neonscan.theme import NEON_MAGENTA, NEON_PINK, NEON_PURPLE, NEON_YELLOW
 from neonscan.ui import (
     console,
     deep_scan_with_progress,
@@ -133,6 +134,7 @@ from neonscan.ui import (
     render_port_table,
     print_web_links,
     open_web_service_prompt,
+    inventory_prompt,
     show_intro,
 )
 
@@ -146,7 +148,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--offline", action="store_true", help="Do not download the OUI database.")
     p.add_argument("--update-oui", action="store_true", help="Force re-download of the IEEE OUI file.")
     p.add_argument("--no-banner", action="store_true", help="Skip the ASCII banner.")
-    p.add_argument("--subnet", help="Override the auto-detected /24 (e.g. 10.0.0.0/24).")
+    p.add_argument("--subnet", help="Override the detected network prefix (IPv4 or IPv6 CIDR).")
     p.add_argument(
         "--cache-dir",
         default=str(Path.home() / ".neonscan" / "cache"),
@@ -239,6 +241,11 @@ def build_parser() -> argparse.ArgumentParser:
     report_p.add_argument("--port", type=int, default=443)
 
     sub.add_parser("net", aliases=["scan"], help="Host discovery (original feature)")
+    udp_p = sub.add_parser("udp", help="Probe common UDP services on one host")
+    udp_p.add_argument("host", help="explicit target host or IP")
+    udp_p.add_argument(
+        "--ports", help="comma-separated subset of supported probes: 53,123,161,1900",
+    )
 
     return p
 
@@ -440,6 +447,7 @@ def run_topology(args) -> list[DiagResult]:
     r.add("Hosts", str(len(hosts_data)))
     r.add("Gateway", gw)
     r.add("Local", net["local_ip"])
+    r.add("Scope", "Schematic subnet view; no switch paths are inferred")
     return [r]
 
 
@@ -508,7 +516,10 @@ def run_net(args) -> list[DiagResult]:
     net_info = detect_network()
     subnet = args.subnet or net_info["subnet"]
     if not args.no_banner:
-        show_intro({**net_info, "subnet": subnet})
+        show_intro({
+            **net_info, "subnet": subnet,
+            "subnet_method": "user-supplied CIDR" if args.subnet else net_info["subnet_method"],
+        })
     hosts, ports_by_host = discover_with_progress(
         subnet=subnet, ping_workers=32 if network.IS_TERMUX else 64,
         cache_dir=Path(args.cache_dir),
@@ -545,24 +556,59 @@ def run_net(args) -> list[DiagResult]:
             if host:
                 ports = [80, 443, 8080, 8443, 8000, 8888, 3000]
                 from neonscan.scanner import scan_host
-                results = scan_host(host.ip, ports=ports, workers=20, timeout=1.5)
-                if results:
+                results = scan_host(
+                    host.ip, ports=ports, workers=20, timeout=1.5,
+                    include_states=True,
+                )
+                host.scanned_ports["tcp"] = list(ports)
+                if any(result.open for result in results):
                     console.print(render_port_table(host.ip, results))
                     print_web_links([host], {host.ip: results})
-                    ports_by_host[host.ip] = results
                 else:
                     console.print(f"[{NEON_MAGENTA}]// no web ports open[/]")
+                    console.print(render_port_table(host.ip, results))
+                ports_by_host[host.ip] = results
         elif action == "O":
             host = prompt_host(hosts)
             if host:
                 open_web_service_prompt(
                     host.ip, ports_by_host.get(host.ip, [])
                 )
+        elif action == "U":
+            host = prompt_host(hosts)
+            if host:
+                from neonscan.scanner import scan_udp_host
+                results = scan_udp_host(host.ip, timeout=0.8 if network.IS_TERMUX else 1.0)
+                host.scanned_ports["udp"] = [result.port for result in results]
+                previous = [result for result in ports_by_host.get(host.ip, []) if result.protocol != "udp"]
+                ports_by_host[host.ip] = previous + results
+                console.print(render_port_table(host.ip, results))
+                console.print("[dim]UDP sin respuesta no permite distinguir entre servicio abierto y filtrado.[/]")
+        elif action == "i":
+            inventory_prompt(subnet, hosts, ports_by_host)
         elif action == "e":
             out = Path.cwd() / "neonscan-net.json"
             tgt = Prompt.ask("[bold]save path[/]", default=str(out))
             export_host_scan_report(Path(tgt), hosts, ports_by_host)
         action = prompt_action()
+    return []
+
+
+def run_udp(args) -> list[DiagResult]:
+    """Run a small, read-only UDP service probe against an explicit target."""
+    from neonscan.scanner import UDP_COMMON_PORTS, scan_udp_host
+
+    ports = UDP_COMMON_PORTS
+    if args.ports:
+        try:
+            ports = tuple(dict.fromkeys(int(value.strip()) for value in args.ports.split(",")))
+        except ValueError as exc:
+            raise ValueError("UDP ports must be comma-separated integers") from exc
+        if not ports or any(port < 1 or port > 65535 for port in ports):
+            raise ValueError("UDP ports must be between 1 and 65535")
+    results = scan_udp_host(args.host, ports=ports)
+    console.print(render_port_table(args.host, results))
+    console.print("[dim]UDP sin respuesta no permite distinguir entre servicio abierto y filtrado.[/]")
     return []
 
 
@@ -640,6 +686,7 @@ SUBCOMMANDS = {
     "full": run_full,
     "net": run_net,
     "scan": run_net,
+    "udp": run_udp,
     "report": run_report,
 }
 
@@ -653,7 +700,10 @@ def interactive_mode(args) -> int:
     net_info = detect_network()
     subnet = args.subnet or net_info["subnet"]
     if not args.no_banner:
-        show_intro({**net_info, "subnet": subnet})
+        show_intro({
+            **net_info, "subnet": subnet,
+            "subnet_method": "user-supplied CIDR" if args.subnet else net_info["subnet_method"],
+        })
     else:
         console.print(
             f"[bold {NEON_PINK}]neonscan :: subnet={subnet} iface={net_info['interface']}[/]"
@@ -674,10 +724,35 @@ def interactive_mode(args) -> int:
                 menu_context = "main"
                 continue
         else:
-            action = interactive_prompt(has_hosts=bool(hosts))
+            action = interactive_prompt(
+                has_hosts=bool(hosts), ipv6_subnets=net_info.get("ipv6_subnets", [])
+            )
         if action == "q":
             console.print(f"[bold {NEON_PINK}]// jack out. 👋[/]")
             return 0
+        if action == "v6":
+            prefixes = net_info.get("ipv6_subnets", [])
+            if not prefixes:
+                console.print(f"[{NEON_MAGENTA}]// no se detectaron prefijos IPv6 utilizables[/]")
+                continue
+            options = [(str(index), prefix) for index, prefix in enumerate(prefixes, start=1)]
+            choice = _menu_choice("PREFIJO IPv6", options + [("0", "Cancelar")])
+            if choice == "0":
+                continue
+            selected_prefix = prefixes[int(choice) - 1]
+            try:
+                from neonscan.network import _network_hosts
+                _network_hosts(selected_prefix)
+                subnet = selected_prefix
+            except ValueError:
+                console.print(
+                    f"[{NEON_YELLOW}]El prefijo {selected_prefix} es demasiado amplio para enumerarlo. "
+                    "Escribe un CIDR más pequeño (máximo 1,024 direcciones).[/]"
+                )
+                subnet = interactive_subnet_prompt(default_subnet=selected_prefix)
+            hosts, ports_by_host = [], {}
+            console.print(f"[bold {NEON_PINK}]// escaneando prefijo IPv6 {subnet}[/]")
+            action = "s"
         if action == "r":
             subnet = interactive_subnet_prompt(default_subnet=subnet)
             hosts, ports_by_host = [], {}
@@ -734,14 +809,18 @@ def interactive_mode(args) -> int:
                 if not host:
                     continue
                 from neonscan.scanner import scan_host
+                ports = [80, 443, 8000, 8080, 8081, 8088, 8443, 8888, 3000, 5000, 9000]
                 results = scan_host(
                     host.ip,
-                    ports=[80, 443, 8000, 8080, 8081, 8088, 8443, 8888, 3000, 5000, 9000],
+                    ports=ports,
                     workers=20 if network.IS_TERMUX else 30,
                     timeout=1.5,
+                    include_states=True,
                 )
-                if not results:
+                host.scanned_ports["tcp"] = list(ports)
+                if not any(result.open for result in results):
                     console.print(f"[{NEON_MAGENTA}]// no web ports open[/]")
+                    console.print(render_port_table(host.ip, results))
                 else:
                     console.print(render_port_table(host.ip, results))
                     print_web_links([host], {host.ip: results})
@@ -752,6 +831,21 @@ def interactive_mode(args) -> int:
                 if not host:
                     continue
                 open_web_service_prompt(host.ip, ports_by_host.get(host.ip, []))
+
+            elif action == "u":
+                host = prompt_host(hosts)
+                if not host:
+                    continue
+                from neonscan.scanner import scan_udp_host
+                results = scan_udp_host(host.ip, timeout=0.8 if network.IS_TERMUX else 1.0)
+                host.scanned_ports["udp"] = [result.port for result in results]
+                previous = [result for result in ports_by_host.get(host.ip, []) if result.protocol != "udp"]
+                ports_by_host[host.ip] = previous + results
+                console.print(render_port_table(host.ip, results))
+                console.print("[dim]UDP sin respuesta no permite distinguir entre servicio abierto y filtrado.[/]")
+
+            elif action == "i":
+                inventory_prompt(subnet, hosts, ports_by_host)
 
             elif action == "e":
                 if not hosts:
@@ -858,16 +952,22 @@ def _menu_choice(title: str, options: list[tuple[str, str]]) -> str:
                       show_choices=False, show_default=False)
 
 
-def interactive_prompt(has_hosts: bool = False) -> str:
+def interactive_prompt(
+    has_hosts: bool = False,
+    ipv6_subnets: Optional[list[str]] = None,
+) -> str:
     """Compact numbered home menu. A scan is never started implicitly."""
     options = [("1", "Escanear la red local"), ("2", "Diagnósticos"),
                ("3", "Cambiar subred objetivo")]
     if has_hosts:
         options.append(("4", "Herramientas para equipos encontrados"))
     options.append(("5", "Revisar entorno y dependencias"))
+    if ipv6_subnets:
+        options.append(("6", "Escanear IPv6 detectado"))
     options.append(("0", "Salir"))
     choice = _menu_choice("MENÚ PRINCIPAL", options)
-    return {"1": "s", "2": "m", "3": "r", "4": "h", "5": "E", "0": "q"}[choice]
+    return {"1": "s", "2": "m", "3": "r", "4": "h", "5": "E",
+            "6": "v6", "0": "q"}[choice]
 
 
 def interactive_diagnostics_prompt() -> Optional[str]:
@@ -900,23 +1000,23 @@ def interactive_hosts_prompt() -> Optional[str]:
     choice = _menu_choice("EQUIPOS ENCONTRADOS", [
         ("1", "Escaneo profundo de puertos"), ("2", "Buscar servicios web"),
         ("3", "Exportar resultados"), ("4", "Abrir servicio web en navegador"),
+        ("5", "Comprobar servicios UDP comunes"),
+        ("6", "Historial y cambios del inventario"),
         ("0", "Volver al menú principal"),
     ])
-    return {"1": "d", "2": "p", "3": "e", "4": "o", "0": None}[choice]
+    return {"1": "d", "2": "p", "3": "e", "4": "o", "5": "u", "6": "i", "0": None}[choice]
 
 def interactive_subnet_prompt(default_subnet: str) -> str:
     import ipaddress
+    from neonscan.network import _network_hosts
 
     while True:
         value = Prompt.ask(f"[bold {NEON_PINK}]new subnet (CIDR)[/]", default=default_subnet)
         try:
-            subnet = ipaddress.IPv4Network(value, strict=False)
+            subnet = ipaddress.ip_network(value, strict=False)
+            _network_hosts(str(subnet))
         except ValueError:
-            console.print(f"[{NEON_MAGENTA}]Enter an IPv4 subnet such as 192.168.1.0/24.[/]")
-            continue
-        hosts = subnet.num_addresses if subnet.prefixlen >= 31 else subnet.num_addresses - 2
-        if hosts > 1024:
-            console.print(f"[{NEON_MAGENTA}]Choose a subnet with 1,024 hosts or fewer (this one has {hosts:,}).[/]")
+            console.print(f"[{NEON_MAGENTA}]Escribe un CIDR IPv4 o IPv6 con hasta 1,024 direcciones utilizables.[/]")
             continue
         return str(subnet)
 

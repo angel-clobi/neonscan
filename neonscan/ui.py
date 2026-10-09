@@ -18,10 +18,12 @@ from rich.progress import (
 )
 from rich.prompt import Confirm, Prompt
 from rich.table import Table
+from rich.style import Style
+from rich.text import Text
 
 from .banner import render_banner, render_intro_panel
 from .network import IS_TERMUX, Host, detect_network
-from .scanner import PortResult, scan_host
+from .scanner import PortResult, scan_host, service_name
 from .theme import (
     NEON_CYAN,
     NEON_GREEN,
@@ -56,6 +58,53 @@ def make_progress(label: str) -> Progress:
 # Tables
 # ---------------------------------------------------------------------------
 
+def _port_label(ip: str, result: PortResult) -> Text:
+    service = result.service or service_name(result.port)
+    label = f"{result.port}/{service}"
+    text = Text()
+    if result.web_scheme in ("http", "https"):
+        url = f"{result.web_scheme}://{ip}:{result.port}/"
+        text.append(label, style=Style(color=NEON_CYAN, underline=True, link=url))
+    else:
+        text.append(label, style=NEON_CYAN)
+    return text
+
+
+def _ports_cell(ip: str, results: list[PortResult]) -> Text:
+    text = Text()
+    if not results:
+        return Text("—", style="dim")
+    for index, result in enumerate(results):
+        if index:
+            text.append("  ")
+        text.append_text(_port_label(ip, result))
+    return text
+
+
+def print_web_links(hosts: list[Host], ports_by_host: dict[str, list[PortResult]]) -> None:
+    """Print visible, clickable URLs as a fallback for terminals without OSC 8."""
+    endpoints = [
+        (host.ip, port)
+        for host in hosts
+        for port in ports_by_host.get(host.ip, [])
+        if port.web_scheme in ("http", "https")
+    ]
+    if not endpoints:
+        return
+    table = Table(
+        title=f"[bold {NEON_PINK}]⟨ WEB LINKS · click/tap para abrir ⟩[/]",
+        box=ROUNDED,
+        border_style=NEON_CYAN,
+        header_style=f"bold {NEON_YELLOW}",
+        expand=True,
+    )
+    table.add_column("HOST", no_wrap=True)
+    table.add_column("URL", overflow="fold")
+    for ip, result in endpoints:
+        url = f"{result.web_scheme}://{ip}:{result.port}/"
+        table.add_row(ip, Text(url, style=Style(color=NEON_CYAN, underline=True, link=url)))
+    console.print(table)
+
 def render_host_table(hosts: list[Host], ports_by_host: dict[str, list[PortResult]]) -> Table:
     """Render the main ghost-networks table for all discovered hosts."""
     if console.width < 100:
@@ -69,11 +118,11 @@ def render_host_table(hosts: list[Host], ports_by_host: dict[str, list[PortResul
         table.add_column("#", justify="right", width=3)
         table.add_column("IP", style=f"bold {NEON_CYAN}", no_wrap=True)
         table.add_column("HOST", style=NEON_GREEN, overflow="ellipsis")
-        table.add_column("OPEN", justify="right", width=5)
+        table.add_column("OPEN PORTS / SERVICE", overflow="fold")
         for idx, host in enumerate(hosts, start=1):
             table.add_row(
                 str(idx), host.ip, host.hostname or "—",
-                str(len(ports_by_host.get(host.ip, []))),
+                _ports_cell(host.ip, ports_by_host.get(host.ip, [])),
             )
         return table
 
@@ -92,13 +141,10 @@ def render_host_table(hosts: list[Host], ports_by_host: dict[str, list[PortResul
     table.add_column("HOSTNAME", style=NEON_GREEN, width=24)
     table.add_column("MAC", style=NEON_YELLOW, width=20)
     table.add_column("MANUFACTURER", style=NEON_PINK, width=24)
-    table.add_column("OPEN", justify="center", width=6)
-    table.add_column("WEB ⚡", justify="center", width=6)
+    table.add_column("OPEN PORTS / SERVICE", overflow="fold")
 
     for idx, host in enumerate(hosts, start=1):
         prs = ports_by_host.get(host.ip, [])
-        open_n = len(prs)
-        web_n = sum(1 for p in prs if p.is_web)
         state = f"{SCAN_GLYPHS['online']} [green]ONLINE[/]"
         table.add_row(
             f"{idx:02d}",
@@ -107,8 +153,7 @@ def render_host_table(hosts: list[Host], ports_by_host: dict[str, list[PortResul
             host.hostname or "[dim]—[/dim]",
             host.mac or "[dim]—[/dim]",
             host.manufacturer or "[dim]Unknown[/dim]",
-            f"[bold {NEON_GREEN}]{open_n}[/]" if open_n else f"[{NEON_PURPLE}]0[/]",
-            f"[bold {NEON_YELLOW}]{web_n}[/]" if web_n else f"[{NEON_PURPLE}]0[/]",
+            _ports_cell(host.ip, prs),
         )
     return table
 
@@ -129,7 +174,7 @@ def render_port_table(ip: str, results: list[PortResult]) -> Table:
             detail = result.web_title or result.banner or result.web_server or "open"
             if result.web_status:
                 detail = f"HTTP {result.web_status} · {detail}"
-            table.add_row(str(result.port), result.service or "?", detail)
+            table.add_row(_port_label(ip, result), result.service or service_name(result.port), detail)
         return table
 
     table = Table(
@@ -158,8 +203,8 @@ def render_port_table(ip: str, results: list[PortResult]) -> Table:
         title = r.web_title or r.banner or ""
         server = r.web_server or ""
         table.add_row(
-            str(r.port),
-            r.service or "?",
+            _port_label(ip, r),
+            r.service or service_name(r.port),
             is_web,
             badge,
             server[:22],
@@ -388,6 +433,7 @@ def export_report(
                         "web_title": p.web_title,
                         "web_status": p.web_status,
                         "web_server": p.web_server,
+                        "web_scheme": p.web_scheme,
                         "banner": p.banner,
                     }
                     for p in ports_by_host.get(h.ip, [])

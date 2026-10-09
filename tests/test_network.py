@@ -104,6 +104,45 @@ def test_try_port_open_for_loopback_listener():
         s.close()
 
 
+def test_port_service_falls_back_to_unknown_label():
+    from neonscan.scanner import service_name
+
+    assert service_name(80) == "http"
+    assert service_name(443) == "https"
+    assert service_name(65000) in {"unknown", "65000/tcp"}
+
+
+def test_http_probe_records_detected_scheme(monkeypatch):
+    from neonscan import scanner
+
+    calls = []
+
+    def fake_request(ip, port, use_tls, timeout):
+        calls.append(use_tls)
+        if use_tls:
+            return 200, "test-server", "Router", "<title>Router</title>"
+        return 0, "", "", ""
+
+    monkeypatch.setattr(scanner, "_http_request", fake_request)
+    result = scanner.PortResult(port=8080, open=True)
+    scanner._populate_http_info("192.0.2.1", 8080, result)
+    assert calls == [False, True]
+    assert result.web_scheme == "https"
+    assert result.web_status == "200"
+
+
+def test_open_web_port_labels_are_clickable_and_named():
+    from neonscan.scanner import PortResult
+    from neonscan.ui import _port_label, _ports_cell
+
+    result = PortResult(port=8443, open=True, service="https-alt", web_scheme="https")
+    label = _port_label("192.0.2.8", result)
+    summary = _ports_cell("192.0.2.8", [result])
+    assert label.plain == "8443/https-alt"
+    assert label.spans[0].style.link == "https://192.0.2.8:8443/"
+    assert "8443/https-alt" in summary.plain
+
+
 # OUI cache: offline mode -----------------------------------------------------
 
 def test_oui_cache_initialized_with_default_dir(tmp_path):

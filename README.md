@@ -187,6 +187,13 @@ from the beginning. Menus use numbered choices and short category screens to fit
 narrow terminal windows such as Termux on Android. Press `Ctrl-C` during an
 operation to cancel it and return to the current section.
 
+Scan results list each open port and its detected service. Confirmed HTTP/HTTPS
+ports and their URLs are clickable in terminals that support hyperlinks. In
+Termux, tapping URLs in terminal output may be disabled by default; add
+`terminal-onclick-url-open=true` to `~/.termux/termux.properties`, then run
+`termux-reload-settings`. NeonScan also prints the full URL so it stays visible
+in terminals without OSC 8 hyperlink support.
+
 The environment review detects the operating system and searches `PATH` for
 optional commands such as `ping`, `traceroute`, `openssl`, and `iperf3`. It lists
 available fallbacks and platform-specific install suggestions. It never installs

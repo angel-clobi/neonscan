@@ -131,6 +131,7 @@ from neonscan.ui import (
     render_empty_state,
     render_host_table,
     render_port_table,
+    print_web_links,
     show_intro,
 )
 
@@ -516,6 +517,7 @@ def run_net(args) -> list[DiagResult]:
         render_empty_state()
         return []
     console.print(render_host_table(hosts, ports_by_host))
+    print_web_links(hosts, ports_by_host)
     console.print()
     action = prompt_action()
     while action != "q":
@@ -528,12 +530,14 @@ def run_net(args) -> list[DiagResult]:
             )
             if hosts:
                 console.print(render_host_table(hosts, ports_by_host))
+                print_web_links(hosts, ports_by_host)
         elif action == "d":
             host = prompt_host(hosts)
             if host:
                 results = deep_scan_with_progress(host, top=200)
                 if results:
                     console.print(render_port_table(host.ip, results))
+                    print_web_links([host], {host.ip: results})
                     ports_by_host[host.ip] = results
         elif action == "p":
             host = prompt_host(hosts)
@@ -543,6 +547,7 @@ def run_net(args) -> list[DiagResult]:
                 results = scan_host(host.ip, ports=ports, workers=20, timeout=1.5)
                 if results:
                     console.print(render_port_table(host.ip, results))
+                    print_web_links([host], {host.ip: results})
                     ports_by_host[host.ip] = results
                 else:
                     console.print(f"[{NEON_MAGENTA}]// no web ports open[/]")
@@ -689,6 +694,7 @@ def interactive_mode(args) -> int:
                 continue
             if hosts:
                 console.print(render_host_table(hosts, ports_by_host))
+                print_web_links(hosts, ports_by_host)
             else:
                 hosts, ports_by_host = [], {}
                 render_empty_state()
@@ -713,6 +719,7 @@ def interactive_mode(args) -> int:
                     console.print(f"[{NEON_MAGENTA}]// no open ports on {host.ip}[/]")
                     continue
                 console.print(render_port_table(host.ip, results))
+                print_web_links([host], {host.ip: results})
                 ports_by_host[host.ip] = results
 
             elif action == "p":
@@ -730,6 +737,7 @@ def interactive_mode(args) -> int:
                     console.print(f"[{NEON_MAGENTA}]// no web ports open[/]")
                 else:
                     console.print(render_port_table(host.ip, results))
+                    print_web_links([host], {host.ip: results})
                 ports_by_host[host.ip] = results
 
             elif action == "e":

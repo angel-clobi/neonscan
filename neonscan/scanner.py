@@ -58,7 +58,23 @@ PORT_HINTS = {
 }
 
 # Subset of ports we treat as "web service" candidates for HTTP detection.
-WEB_PORTS = {80, 443, 8000, 8008, 8080, 8081, 8083, 8088, 8181, 8443, 8888, 9000, 3000}
+WEB_PORTS = {
+    80, 81, 443, 444, 3000, 3001, 4000, 5000, 5001, 5601, 5984, 5985,
+    5986, 6443, 7474, 8000, 8008, 8080, 8081, 8083, 8086, 8088, 8089,
+    8090, 8181, 8443, 8500, 8888, 9000, 9001, 9090, 9200, 9443,
+}
+TLS_PORTS = {443, 444, 5986, 6443, 8443, 9443}
+
+
+def service_name(port: int) -> str:
+    """Return a well-known service label, falling back to the OS TCP database."""
+    known = PORT_HINTS.get(port)
+    if known:
+        return known
+    try:
+        return socket.getservbyport(port, "tcp")
+    except OSError:
+        return "unknown"
 
 
 @dataclass
@@ -70,6 +86,7 @@ class PortResult:
     web_title: str = ""
     web_status: str = ""
     web_server: str = ""
+    web_scheme: str = ""
 
     @property
     def is_web(self) -> bool:
@@ -116,9 +133,9 @@ def _try_port(ip: str, port: int, timeout: float = 1.0) -> PortResult:
     """Probe a single port and capture as much info as possible."""
     with _tcp_connection(ip, port, timeout=timeout) as s:
         if s is None:
-            return PortResult(port=port, open=False, service=PORT_HINTS.get(port, ""))
+            return PortResult(port=port, open=False, service=service_name(port))
 
-        result = PortResult(port=port, open=True, service=PORT_HINTS.get(port, ""))
+        result = PortResult(port=port, open=True, service=service_name(port))
 
         if port in WEB_PORTS:
             _populate_http_info(ip, port, result)
@@ -138,7 +155,9 @@ def _try_port(ip: str, port: int, timeout: float = 1.0) -> PortResult:
 # HTTP(S) title / server probing
 # ---------------------------------------------------------------------------
 
-def _http_request(ip: str, port: int, use_tls: bool) -> tuple[int, str, str, str]:
+def _http_request(
+    ip: str, port: int, use_tls: bool, timeout: float = 2.5
+) -> tuple[int, str, str, str]:
     """Issue a quick GET via http.client. Return (status, server, title, body)."""
     conn = None
     try:
@@ -147,10 +166,10 @@ def _http_request(ip: str, port: int, use_tls: bool) -> tuple[int, str, str, str
             ctx.check_hostname = False
             ctx.verify_mode = ssl.CERT_NONE
             conn = http.client.HTTPSConnection(
-                ip, port=port, timeout=2.5, context=ctx
+                ip, port=port, timeout=timeout, context=ctx
             )
         else:
-            conn = http.client.HTTPConnection(ip, port=port, timeout=2.5)
+            conn = http.client.HTTPConnection(ip, port=port, timeout=timeout)
         conn.request(
             "GET",
             "/",
@@ -190,9 +209,19 @@ def _extract_title(html: str) -> str:
 
 
 def _populate_http_info(ip: str, port: int, result: PortResult) -> None:
-    use_tls = port in (443, 8443, 9443, 5986, 8002, 8883)
-    status, server, title, body = _http_request(ip, port, use_tls=use_tls)
+    use_tls = port in TLS_PORTS
+    scheme = "https" if use_tls else "http"
+    status, server, title, body = _http_request(
+        ip, port, use_tls=use_tls, timeout=1.5
+    )
+    if not status:
+        # Non-standard ports may serve HTTPS (or HTTP on a conventional TLS port).
+        status, server, title, body = _http_request(
+            ip, port, use_tls=not use_tls, timeout=1.5
+        )
+        scheme = "http" if use_tls else "https"
     if status:
+        result.web_scheme = scheme
         result.web_status = str(status)
     if server:
         result.web_server = server

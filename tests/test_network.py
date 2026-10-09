@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import ipaddress
 import socket
 import subprocess
 from unittest import mock
@@ -34,11 +35,26 @@ def test_detect_network_keys():
     assert "local_ip" in info
     assert "subnet" in info
     assert "interface" in info
-    # subnet should include /24 and start with the same first 3 octets
+    # The detected interface prefix must actually contain the selected local IP.
     ip = info["local_ip"]
-    if "." in ip:  # IPv4 case
-        head = ".".join(ip.split(".")[:3])
-        assert info["subnet"].startswith(head)
+    assert ipaddress.ip_address(ip.split("%", 1)[0]) in ipaddress.ip_network(
+        info["subnet"], strict=False
+    )
+
+
+def test_network_hosts_accepts_bounded_ipv6_and_rejects_large_ranges():
+    from neonscan.network import _network_hosts
+
+    network, hosts = _network_hosts("2001:db8::/126")
+    assert network.version == 6
+    assert hosts == ["2001:db8::1", "2001:db8::2", "2001:db8::3"]
+
+    try:
+        _network_hosts("2001:db8::/64")
+    except ValueError as exc:
+        assert "1,024" in str(exc)
+    else:
+        raise AssertionError("a /64 must be refused by the bounded scanner")
 
 
 # Ping sweep with mocked subprocess --------------------------------------------
@@ -110,6 +126,34 @@ def test_port_service_falls_back_to_unknown_label():
     assert service_name(80) == "http"
     assert service_name(443) == "https"
     assert service_name(65000) in {"unknown", "65000/tcp"}
+
+
+def test_scan_host_can_return_explicit_port_states(monkeypatch):
+    from neonscan import scanner
+
+    states = {
+        80: scanner.PortResult(80, True, state="open"),
+        81: scanner.PortResult(81, False, state="closed"),
+        82: scanner.PortResult(82, False, state="filtered"),
+    }
+    monkeypatch.setattr(scanner, "_try_port", lambda _ip, port, _timeout: states[port])
+
+    assert [item.port for item in scanner.scan_host("127.0.0.1", [80, 81, 82])] == [80]
+    results = scanner.scan_host("127.0.0.1", [80, 81, 82], include_states=True)
+    assert [(item.port, item.state) for item in results] == [
+        (80, "open"), (81, "closed"), (82, "filtered")
+    ]
+
+
+def test_udp_scanner_rejects_ports_without_a_safe_protocol_probe():
+    from neonscan.scanner import scan_udp_host
+
+    try:
+        scan_udp_host("127.0.0.1", ports=[9999])
+    except ValueError as exc:
+        assert "Safe protocol probes" in str(exc)
+    else:
+        raise AssertionError("unknown UDP protocols must not receive generic payloads")
 
 
 def test_http_probe_records_detected_scheme(monkeypatch):

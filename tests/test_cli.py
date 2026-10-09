@@ -31,7 +31,7 @@ def test_subcommands_registered():
     mod = _load_entry()
     expected = {
         "wifi", "routes", "dhcp", "public", "connections", "monitor", "aps",
-        "ping", "dns", "speed", "traceroute", "full", "net", "report",
+        "ping", "dns", "speed", "traceroute", "full", "net", "report", "udp",
     }
     assert set(mod.SUBCOMMANDS) >= expected
 
@@ -44,7 +44,7 @@ def test_build_parser_lists_subcommands():
     sp_actions = [a for a in parser._actions if isinstance(a, _SubParsersAction)]
     assert sp_actions, "no subparsers action registered"
     choices = sp_actions[0].choices
-    for name in ("wifi", "full", "ping", "dns", "speed", "traceroute", "report"):
+    for name in ("wifi", "full", "ping", "dns", "speed", "traceroute", "report", "udp"):
         assert name in choices
 
 

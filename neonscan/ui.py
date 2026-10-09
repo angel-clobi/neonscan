@@ -1,6 +1,9 @@
 """Interactive NeonScan UI — banners, tables, prompts, menu loop."""
 
 import json
+import shutil
+import subprocess
+import webbrowser
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -23,7 +26,12 @@ from rich.text import Text
 
 from .banner import render_banner, render_intro_panel
 from .network import IS_TERMUX, Host, detect_network
-from .scanner import PortResult, scan_host, service_name
+from .scanner import (
+    PortResult,
+    quick_web_check,
+    scan_host,
+    service_name,
+)
 from .theme import (
     NEON_CYAN,
     NEON_GREEN,
@@ -213,6 +221,70 @@ def render_port_table(ip: str, results: list[PortResult]) -> Table:
     return table
 
 
+def open_web_service_prompt(ip: str, results: list[PortResult]) -> bool:
+    """Let the user choose a confirmed HTTP(S) endpoint and open its browser."""
+    endpoints = [r for r in results if r.web_scheme in ("http", "https")]
+    if not endpoints:
+        console.print(f"[dim]No hay puertos web guardados para {ip}; comprobando puertos comunes...[/]")
+        endpoints = [r for r in quick_web_check(ip) if r.web_scheme in ("http", "https")]
+    if not endpoints:
+        console.print(f"[bold {NEON_MAGENTA}]// no se detectaron servicios HTTP/HTTPS en {ip}[/]")
+        return False
+
+    table = Table(
+        title=f"[bold {NEON_PINK}]⟨ ABRIR SERVICIO · {ip} ⟩[/]",
+        box=ROUNDED,
+        border_style=NEON_CYAN,
+        header_style=f"bold {NEON_YELLOW}",
+        expand=True,
+    )
+    table.add_column("#", justify="right", width=3)
+    table.add_column("PUERTO / SERVICIO")
+    table.add_column("URL", overflow="fold")
+    urls = []
+    for index, result in enumerate(endpoints, start=1):
+        url = f"{result.web_scheme}://{ip}:{result.port}/"
+        urls.append(url)
+        table.add_row(
+            str(index),
+            _port_label(ip, result),
+            Text(url, style=Style(color=NEON_CYAN, underline=True, link=url)),
+        )
+    console.print(table)
+    choice = Prompt.ask(
+        "Número del servicio que quieres abrir (0 para cancelar)",
+        choices=[str(i) for i in range(len(urls) + 1)],
+        show_choices=False,
+        show_default=False,
+    )
+    if choice == "0":
+        return False
+
+    url = urls[int(choice) - 1]
+    try:
+        termux_open = shutil.which("termux-open-url")
+        if IS_TERMUX and termux_open:
+            completed = subprocess.run(
+                [termux_open, url], capture_output=True, text=True,
+                timeout=10, check=False,
+            )
+            opened = completed.returncode == 0
+            error = completed.stderr.strip()
+        else:
+            opened = webbrowser.open(url, new=2)
+            error = ""
+    except (OSError, subprocess.SubprocessError, webbrowser.Error) as exc:
+        opened, error = False, str(exc)
+
+    if opened:
+        console.print(f"[bold {NEON_GREEN}]// navegador abierto: {url}[/]")
+    else:
+        console.print(f"[bold {NEON_MAGENTA}]// no se pudo abrir el navegador. URL: {url}[/]")
+        if error:
+            console.print(f"[dim]{error}[/]")
+    return opened
+
+
 # ---------------------------------------------------------------------------
 # Menus / prompts
 # ---------------------------------------------------------------------------
@@ -229,6 +301,7 @@ def prompt_action() -> str:
         ("S", "scan", "Re-scan local subnet"),
         ("D", "deep", "Deep-scan a host (full top-1000 ports + services)"),
         ("P", "port", "Web-quick scan on selected host"),
+        ("O", "open", "Open a detected HTTP/HTTPS service in browser"),
         ("E", "export", "Export current report as JSON"),
         ("Q", "quit", "Disconnect (exit)"),
     ]

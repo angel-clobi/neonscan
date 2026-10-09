@@ -63,6 +63,7 @@ WEB_PORTS = {
     5986, 6443, 7474, 8000, 8008, 8080, 8081, 8083, 8086, 8088, 8089,
     8090, 8181, 8443, 8500, 8888, 9000, 9001, 9090, 9200, 9443,
 }
+QUICK_WEB_PORTS = [80, 443, 8080, 8443, 8000, 8888, 3000, 5000, 9000]
 TLS_PORTS = {443, 444, 5986, 6443, 8443, 9443}
 
 
@@ -273,5 +274,7 @@ def scan_host(
 
 def quick_web_check(ip: str, progress_cb: Optional[callable] = None) -> list[PortResult]:
     """Light web-service-only scan on ports we know are HTTP-shaped."""
-    ports = sorted(WEB_PORTS)
-    return scan_host(ip, ports=ports, workers=20, timeout=1.5, progress_cb=progress_cb)
+    return scan_host(
+        ip, ports=QUICK_WEB_PORTS, workers=20, timeout=1.5,
+        progress_cb=progress_cb,
+    )

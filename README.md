@@ -189,6 +189,9 @@ operation to cancel it and return to the current section.
 
 Scan results list each open port and its detected service. Confirmed HTTP/HTTPS
 ports and their URLs are clickable in terminals that support hyperlinks. In
+the host tools menu, choose **Abrir servicio web en navegador** to select a
+detected endpoint and launch it with the system browser. In macOS Terminal.app,
+use `⌘`-click on the visible URL; that app does not handle OSC 8 links. In
 Termux, tapping URLs in terminal output may be disabled by default; add
 `terminal-onclick-url-open=true` to `~/.termux/termux.properties`, then run
 `termux-reload-settings`. NeonScan also prints the full URL so it stays visible

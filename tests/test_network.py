@@ -143,6 +143,23 @@ def test_open_web_port_labels_are_clickable_and_named():
     assert "8443/https-alt" in summary.plain
 
 
+def test_open_web_service_prompt_launches_selected_url(monkeypatch):
+    from io import StringIO
+    from rich.console import Console
+    from neonscan import ui
+    from neonscan.scanner import PortResult
+
+    opened = []
+    monkeypatch.setattr(ui, "IS_TERMUX", False)
+    monkeypatch.setattr(ui.Prompt, "ask", lambda *_args, **_kwargs: "1")
+    monkeypatch.setattr(ui.webbrowser, "open", lambda url, new=0: opened.append((url, new)) or True)
+    monkeypatch.setattr(ui, "console", Console(file=StringIO(), width=80))
+    result = PortResult(port=443, open=True, service="https", web_scheme="https")
+
+    assert ui.open_web_service_prompt("192.0.2.8", [result]) is True
+    assert opened == [("https://192.0.2.8:443/", 2)]
+
+
 # OUI cache: offline mode -----------------------------------------------------
 
 def test_oui_cache_initialized_with_default_dir(tmp_path):

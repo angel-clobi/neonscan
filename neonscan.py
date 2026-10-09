@@ -132,6 +132,7 @@ from neonscan.ui import (
     render_host_table,
     render_port_table,
     print_web_links,
+    open_web_service_prompt,
     show_intro,
 )
 
@@ -551,6 +552,12 @@ def run_net(args) -> list[DiagResult]:
                     ports_by_host[host.ip] = results
                 else:
                     console.print(f"[{NEON_MAGENTA}]// no web ports open[/]")
+        elif action == "O":
+            host = prompt_host(hosts)
+            if host:
+                open_web_service_prompt(
+                    host.ip, ports_by_host.get(host.ip, [])
+                )
         elif action == "e":
             out = Path.cwd() / "neonscan-net.json"
             tgt = Prompt.ask("[bold]save path[/]", default=str(out))
@@ -740,6 +747,12 @@ def interactive_mode(args) -> int:
                     print_web_links([host], {host.ip: results})
                 ports_by_host[host.ip] = results
 
+            elif action == "o":
+                host = prompt_host(hosts)
+                if not host:
+                    continue
+                open_web_service_prompt(host.ip, ports_by_host.get(host.ip, []))
+
             elif action == "e":
                 if not hosts:
                     console.print(f"[{NEON_MAGENTA}]// scan the network before exporting hosts[/]")
@@ -886,9 +899,10 @@ def interactive_diagnostics_prompt() -> Optional[str]:
 def interactive_hosts_prompt() -> Optional[str]:
     choice = _menu_choice("EQUIPOS ENCONTRADOS", [
         ("1", "Escaneo profundo de puertos"), ("2", "Buscar servicios web"),
-        ("3", "Exportar resultados"), ("0", "Volver al menú principal"),
+        ("3", "Exportar resultados"), ("4", "Abrir servicio web en navegador"),
+        ("0", "Volver al menú principal"),
     ])
-    return {"1": "d", "2": "p", "3": "e", "0": None}[choice]
+    return {"1": "d", "2": "p", "3": "e", "4": "o", "0": None}[choice]
 
 def interactive_subnet_prompt(default_subnet: str) -> str:
     import ipaddress

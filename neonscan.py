@@ -117,8 +117,8 @@ from neonscan.diagnostics import (
     run_full_diag,
     run_full_diag_summary,
 )
+from neonscan import network
 from neonscan.network import detect_network
-from neonscan.oui import OUICache
 from neonscan.theme import NEON_MAGENTA, NEON_PINK, NEON_PURPLE
 from neonscan.ui import (
     console,
@@ -410,7 +410,12 @@ def run_topology(args) -> list[DiagResult]:
     hosts_data = []
     try:
         net_info = detect_network()
-        hosts, _ = discover_with_progress(subnet=net_info["subnet"], ping_workers=32)
+        hosts, _ = discover_with_progress(
+            subnet=net_info["subnet"], ping_workers=32,
+            cache_dir=Path(getattr(args, "cache_dir", Path.home() / ".neonscan" / "cache")),
+            offline=getattr(args, "offline", False),
+            update_oui=getattr(args, "update_oui", False),
+        )
     except Exception:
         hosts = []
     for h in hosts:
@@ -501,7 +506,11 @@ def run_net(args) -> list[DiagResult]:
     subnet = args.subnet or net_info["subnet"]
     if not args.no_banner:
         show_intro({**net_info, "subnet": subnet})
-    hosts, ports_by_host = discover_with_progress(subnet=subnet, ping_workers=64)
+    hosts, ports_by_host = discover_with_progress(
+        subnet=subnet, ping_workers=32 if network.IS_TERMUX else 64,
+        cache_dir=Path(args.cache_dir),
+        offline=args.offline, update_oui=args.update_oui,
+    )
     if not hosts:
         render_empty_state()
         return []
@@ -511,7 +520,11 @@ def run_net(args) -> list[DiagResult]:
     while action != "q":
         if action == "s":
             hosts, ports_by_host = [], {}
-            hosts, ports_by_host = discover_with_progress(subnet=subnet, ping_workers=64)
+            hosts, ports_by_host = discover_with_progress(
+                subnet=subnet, ping_workers=32 if network.IS_TERMUX else 64,
+                cache_dir=Path(args.cache_dir),
+                offline=args.offline, update_oui=args.update_oui,
+            )
             if hosts:
                 console.print(render_host_table(hosts, ports_by_host))
         elif action == "d":
@@ -623,6 +636,7 @@ SUBCOMMANDS = {
 # ---------------------------------------------------------------------------
 
 def interactive_mode(args) -> int:
+    """Run the menu-first terminal UI; every network scan is user initiated."""
     net_info = detect_network()
     subnet = args.subnet or net_info["subnet"]
     if not args.no_banner:
@@ -632,231 +646,244 @@ def interactive_mode(args) -> int:
             f"[bold {NEON_PINK}]neonscan :: subnet={subnet} iface={net_info['interface']}[/]"
         )
 
-    cache = OUICache(
-        cache_dir=Path(args.cache_dir),
-        update=args.update_oui,
-        offline=args.offline,
-    )
-
-    hosts, ports_by_host = [], {}
-    diag_results: list[DiagResult] = []
-
+    hosts = []
+    ports_by_host = {}
     while True:
-        if not hosts:
-            try:
-                hosts, ports_by_host = discover_with_progress(subnet=subnet, ping_workers=64)
-            except KeyboardInterrupt:
-                console.print(f"[bold {NEON_MAGENTA}]// aborted[/]")
-                return 130
-            if not hosts:
-                render_empty_state()
-                if not Confirm.ask("[bold]retry?[/]", default=True):
-                    return 0
-                continue
-            console.print(render_host_table(hosts, ports_by_host))
-            console.print()
-
-        action = interactive_prompt()
+        action = interactive_prompt(has_hosts=bool(hosts))
         if action == "q":
             console.print(f"[bold {NEON_PINK}]// jack out. 👋[/]")
             return 0
-
-        if action == "s":
-            hosts, ports_by_host = [], {}
-            continue
-
         if action == "r":
             subnet = interactive_subnet_prompt(default_subnet=subnet)
             hosts, ports_by_host = [], {}
+            console.print(f"[bold {NEON_PINK}]// scan target set to {subnet}[/]")
             continue
-
-        if action == "d":
-            host = prompt_host(hosts)
-            if not host:
-                continue
+        if action == "s":
             try:
-                results = deep_scan_with_progress(host, top=200)
-            except KeyboardInterrupt:
-                console.print(f"[bold {NEON_MAGENTA}]// aborted[/]")
-                continue
-            if not results:
-                console.print(f"[{NEON_MAGENTA}]// no open ports on {host.ip}[/]")
-                continue
-            console.print(render_port_table(host.ip, results))
-            ports_by_host[host.ip] = results
-            console.print()
-
-        if action == "p":
-            host = prompt_host(hosts)
-            if not host:
-                continue
-            console.rule(
-                f"[bold {NEON_PINK}]⟨ WEB QUICK :: {host.ip} ⟩[/]", style=NEON_PURPLE,
-            )
-            from neonscan.scanner import scan_host
-            results = scan_host(
-                host.ip,
-                ports=[80, 443, 8000, 8080, 8081, 8088, 8443, 8888, 3000, 5000, 9000],
-                workers=30, timeout=1.5,
-            )
-            if not results:
-                console.print(f"[{NEON_MAGENTA}]// no web ports open[/]")
-            else:
-                console.print(render_port_table(host.ip, results))
-            ports_by_host[host.ip] = results
-
-        if action == "D":
-            # full diagnostics
-            console.rule(f"[bold {NEON_PINK}]⟨ FULL DIAGNOSTICS ⟩[/]", style=NEON_PURPLE)
-            try:
-                diag_results = run_full_diag(
-                    ping_target="8.8.8.8", ping_count=6, speed_size_mb=8,
-                    monitor_s=0.0,
+                hosts, ports_by_host = discover_with_progress(
+                    subnet=subnet,
+                    ping_workers=32 if network.IS_TERMUX else 64,
+                    cache_dir=Path(args.cache_dir),
+                    offline=args.offline,
+                    update_oui=args.update_oui,
                 )
             except KeyboardInterrupt:
-                console.print(f"[bold {NEON_MAGENTA}]// aborted[/]")
+                console.print(f"[bold {NEON_MAGENTA}]// scan cancelled; returning to menu[/]")
+                hosts, ports_by_host = [], {}
                 continue
-            for r in diag_results:
-                _print_diag(r, header=True)
-            if Confirm.ask("[bold]Save report?[/]", default=False):
-                default_path = str(Path.cwd() / "neonscan-report.md")
-                tgt = Prompt.ask("[bold]path[/]", default=default_path)
-                write_report(Path(tgt), diag_results, title="NeonScan full diag")
-                console.print(f"[bold {NEON_PINK}]// saved → {tgt}[/]")
+            except (ValueError, OSError) as exc:
+                console.print(f"[bold {NEON_MAGENTA}]// scan could not start: {exc}[/]")
+                continue
+            if hosts:
+                console.print(render_host_table(hosts, ports_by_host))
+            else:
+                hosts, ports_by_host = [], {}
+                render_empty_state()
+            continue
+        if action == "m":
+            action = interactive_diagnostics_prompt()
+        elif action == "h":
+            action = interactive_hosts_prompt()
+        if action is None:
             continue
 
-        if action == "W":
-            _print_diag(get_wifi_info())
-        if action == "P":
-            target = Prompt.ask("[bold]target[/]", default="8.8.8.8")
-            _print_diag(measure_ping(target))
-        if action == "N":
-            _print_diag(get_public_ip())
-        if action == "T":
-            target = Prompt.ask("[bold]target[/]", default="8.8.8.8")
-            _print_diag(measure_traceroute(target))
-        if action == "G":
-            _print_diag(get_routes())
-            _print_diag(get_dhcp_lease())
-        if action == "C":
-            _print_diag(get_connections())
-        if action == "M":
-            _print_diag(monitor_link(duration_s=6.0))
-        if action == "U":
-            sz = Prompt.ask("[bold]size MB[/]", default="5")
-            try:
-                _print_diag(measure_upload(sizes=[int(sz) * 1_000_000]))
-            except ValueError:
-                console.print(f"[{NEON_MAGENTA}]invalid size[/]")
-        if action == "I":
-            _print_diag(measure_iperf3(duration_s=6))
-        if action == "X":
-            target = Prompt.ask("[bold]target[/]", default="8.8.8.8")
-            _print_diag(measure_mtr(target=target, cycles=3))
-        if action == "K":
-            host = Prompt.ask("[bold]host[/]", default="google.com")
-            port = Prompt.ask("[bold]port[/]", default="443")
-            try:
-                _print_diag(inspect_tls(host, port=int(port)))
-            except ValueError:
-                console.print(f"[{NEON_MAGENTA}]invalid port[/]")
-        if action == "O":
-            _print_diag(detect_captive())
-        if action == "A":
-            _print_diag(analyze_arp())
-        if action == "B":
-            r = discover_mdns()
-            _print_diag(r)
-            services = (r.raw or {}).get("services", {}) if r.ok else {}
-            if services:
-                from rich.table import Table
-                t = Table(title="[bold cyan]⟨ mDNS ⟩[/]", box=None)
-                t.add_column("Type"); t.add_column("Instance"); t.add_column("Host"); t.add_column("Port", justify="right")
-                for label, entries in services.items():
-                    for e in entries[:30]:
-                        t.add_row(label, e.get("instance", "")[:36], e.get("host") or "", str(e.get("port", 0)))
-                console.print(t)
-        if action == "V":
-            target = Prompt.ask("[bold]Save current run as baseline? (y/n)[/]", default="n")
-            if target.lower().startswith("y"):
-                results = run_full_diag(monitor_s=0.0, speed_size_mb=4)
-                b = build_baseline(results)
-                save_baseline(b, Path("~/.neonscan/baseline.json").expanduser())
-                console.print(f"[bold {NEON_PINK}]// baseline saved[/]")
-            else:
-                base = load_baseline(Path("~/.neonscan/baseline.json").expanduser())
-                if not base:
-                    console.print(f"[bold {NEON_MAGENTA}]// no baseline — run with 'y' first[/]")
+        try:
+            if action == "d":
+                host = prompt_host(hosts)
+                if not host:
+                    continue
+                results = deep_scan_with_progress(host, top=200)
+                if not results:
+                    console.print(f"[{NEON_MAGENTA}]// no open ports on {host.ip}[/]")
+                    continue
+                console.print(render_port_table(host.ip, results))
+                ports_by_host[host.ip] = results
+
+            elif action == "p":
+                host = prompt_host(hosts)
+                if not host:
+                    continue
+                from neonscan.scanner import scan_host
+                results = scan_host(
+                    host.ip,
+                    ports=[80, 443, 8000, 8080, 8081, 8088, 8443, 8888, 3000, 5000, 9000],
+                    workers=20 if network.IS_TERMUX else 30,
+                    timeout=1.5,
+                )
+                if not results:
+                    console.print(f"[{NEON_MAGENTA}]// no web ports open[/]")
                 else:
+                    console.print(render_port_table(host.ip, results))
+                ports_by_host[host.ip] = results
+
+            elif action == "e":
+                if not hosts:
+                    console.print(f"[{NEON_MAGENTA}]// scan the network before exporting hosts[/]")
+                    continue
+                out = Path.cwd() / "neonscan-host-scan.json"
+                target = Prompt.ask("[bold]save path[/]", default=str(out))
+                export_host_scan_report(Path(target), hosts, ports_by_host)
+
+            elif action == "D":
+                console.rule(f"[bold {NEON_PINK}]⟨ FULL DIAGNOSTICS ⟩[/]", style=NEON_PURPLE)
+                results = run_full_diag(ping_target="8.8.8.8", ping_count=6, speed_size_mb=8)
+                for result in results:
+                    _print_diag(result, header=True)
+                if Confirm.ask("[bold]Save report?[/]", default=False):
+                    default_path = str(Path.cwd() / "neonscan-report.md")
+                    target = Prompt.ask("[bold]path[/]", default=default_path)
+                    write_report(Path(target), results, title="NeonScan full diag")
+                    console.print(f"[bold {NEON_PINK}]// saved → {target}[/]")
+
+            elif action == "W":
+                _print_diag(get_wifi_info())
+            elif action == "P":
+                _print_diag(measure_ping(Prompt.ask("[bold]target[/]", default="8.8.8.8")))
+            elif action == "Z":
+                _print_diag(measure_dns(Prompt.ask("[bold]domain[/]", default="google.com")))
+            elif action == "N":
+                _print_diag(get_public_ip())
+            elif action == "T":
+                _print_diag(measure_traceroute(Prompt.ask("[bold]target[/]", default="8.8.8.8")))
+            elif action == "G":
+                _print_diag(get_routes())
+                _print_diag(get_dhcp_lease())
+            elif action == "C":
+                _print_diag(get_connections())
+            elif action == "M":
+                _print_diag(monitor_link(duration_s=6.0))
+            elif action == "U":
+                size = Prompt.ask("[bold]size MB[/]", default="5")
+                _print_diag(measure_upload(sizes=[int(size) * 1_000_000]))
+            elif action == "I":
+                _print_diag(measure_iperf3(duration_s=6))
+            elif action == "X":
+                target = Prompt.ask("[bold]target[/]", default="8.8.8.8")
+                _print_diag(measure_mtr(target=target, cycles=3))
+            elif action == "K":
+                host = Prompt.ask("[bold]host[/]", default="google.com")
+                port = int(Prompt.ask("[bold]port[/]", default="443"))
+                _print_diag(inspect_tls(host, port=port))
+            elif action == "O":
+                _print_diag(detect_captive())
+            elif action == "A":
+                _print_diag(analyze_arp())
+            elif action == "B":
+                result = discover_mdns()
+                _print_diag(result)
+                services = (result.raw or {}).get("services", {}) if result.ok else {}
+                if services:
+                    from rich.table import Table
+                    table = Table(title="[bold cyan]⟨ mDNS ⟩[/]", box=None, expand=True)
+                    table.add_column("Type")
+                    table.add_column("Instance", overflow="ellipsis")
+                    table.add_column("Host", overflow="ellipsis")
+                    table.add_column("Port", justify="right")
+                    for label, entries in services.items():
+                        for entry in entries[:30]:
+                            table.add_row(label, entry.get("instance", "")[:36],
+                                          entry.get("host") or "", str(entry.get("port", 0)))
+                    console.print(table)
+            elif action == "V":
+                baseline_path = Path("~/.neonscan/baseline.json").expanduser()
+                save_new = Confirm.ask("[bold]Save this run as the baseline?[/]", default=False)
+                if save_new:
                     results = run_full_diag(monitor_s=0.0, speed_size_mb=4)
-                    diff = diff_against_baseline(base, results)
-                    _print_diag(diff)
-        if action == "F":
-            args_f = argparse.Namespace(format="mermaid", out=None)
-            run_topology(args_f)
+                    save_baseline(build_baseline(results), baseline_path)
+                    console.print(f"[bold {NEON_PINK}]// baseline saved[/]")
+                else:
+                    baseline = load_baseline(baseline_path)
+                    if not baseline:
+                        console.print(f"[bold {NEON_MAGENTA}]// no baseline — save one first[/]")
+                    else:
+                        results = run_full_diag(monitor_s=0.0, speed_size_mb=4)
+                        _print_diag(diff_against_baseline(baseline, results))
+            elif action == "F":
+                run_topology(argparse.Namespace(
+                    format="mermaid", format_pos="mermaid", out=None,
+                    cache_dir=args.cache_dir, offline=args.offline,
+                    update_oui=args.update_oui,
+                ))
+        except KeyboardInterrupt:
+            console.print(f"[bold {NEON_MAGENTA}]// action cancelled; returning to menu[/]")
+        except (ValueError, OSError) as exc:
+            console.print(f"[bold {NEON_MAGENTA}]// action could not complete: {exc}[/]")
 
-        if action == "e":
-            if not hosts:
-                console.print(f"[{NEON_MAGENTA}]// no host scan yet — nothing to export[/]")
-                continue
-            out = Path.cwd() / "neonscan-host-scan.json"
-            tgt = Prompt.ask("[bold]save path[/]", default=str(out))
-            export_host_scan_report(Path(tgt), hosts, ports_by_host)
 
-
-def interactive_prompt() -> str:
+def _menu_choice(title: str, options: list[tuple[str, str]]) -> str:
     from rich.panel import Panel
 
-    options = [
-        ("D", "diag",       "Full diagnostics suite"),
-        ("W", "wifi",       "Wi-Fi link info"),
-        ("P", "ping",       "Ping a target"),
-        ("N", "public",     "Public IP / ISP"),
-        ("T", "traceroute", "Traceroute a target"),
-        ("G", "gateway",    "Gateway + DHCP lease"),
-        ("C", "connections","Active connections"),
-        ("M", "monitor",    "Live RSSI + traffic monitor"),
-        ("U", "upload",     "Upload bandwidth test"),
-        ("I", "iperf3",     "LAN iperf3 test"),
-        ("X", "mtr",        "MTR (per-hop loss)"),
-        ("K", "tls",        "TLS / cert inspection"),
-        ("O", "captive",    "Captive portal check"),
-        ("A", "arp",        "ARP anomalies"),
-        ("B", "mdns",       "mDNS / Bonjour"),
-        ("V", "watch",      "Save/diff against baseline"),
-        ("F", "topology",   "Topology export (Mermaid)"),
-        ("S", "scan",       "Re-scan local subnet"),
-        ("R", "resubnet",   "Re-pick subnet"),
-        ("d", "deep",       "Deep-scan a host (top-200 ports)"),
-        ("p", "port",       "Web-quick on selected host"),
-        ("e", "export",     "Export host scan as JSON"),
-        ("q", "quit",       "Disconnect"),
-    ]
-    body = "\n".join(
-        f"  [{NEON_PINK}][{key}][/] {label:<18} [dim]{desc}[/]"
-        for key, label, desc in options
-    )
-    console.print(
-        Panel(
-            body,
-            title=f"[bold {NEON_PINK}]⟨ ACTIONS ⟩[/]",
-            border_style=NEON_PINK,
-            box=None,
-            padding=(0, 2),
-        )
-    )
-    return Prompt.ask(
-        f"[bold {NEON_PINK}]action[/]",
-        choices=[k for k, *_ in options],
-        default="D",
-    )
+    body = "\n".join(f"  [{NEON_PINK}][{key}][/] {label}" for key, label in options)
+    console.print(Panel(body, title=f"[bold {NEON_PINK}]⟨ {title} ⟩[/]",
+                        border_style=NEON_PINK, padding=(0, 1)))
+    return Prompt.ask("Elige una opción y pulsa Enter",
+                      choices=[key for key, _label in options],
+                      show_choices=False, show_default=False)
 
+
+def interactive_prompt(has_hosts: bool = False) -> str:
+    """Compact numbered home menu. A scan is never started implicitly."""
+    options = [("1", "Escanear la red local"), ("2", "Diagnósticos"),
+               ("3", "Cambiar subred objetivo")]
+    if has_hosts:
+        options.append(("4", "Herramientas para equipos encontrados"))
+    options.append(("0", "Salir"))
+    choice = _menu_choice("MENÚ PRINCIPAL", options)
+    if choice == "2":
+        return interactive_diagnostics_prompt() or "back"
+    if choice == "4":
+        return interactive_hosts_prompt() or "back"
+    return {"1": "s", "3": "r", "0": "q"}[choice]
+
+
+def interactive_diagnostics_prompt() -> Optional[str]:
+    """Category-based diagnostic menus sized for a phone terminal."""
+    groups = [
+        ("1", "Conectividad", [("1", "Diagnóstico completo"), ("2", "Wi-Fi"),
+         ("3", "Ping"), ("4", "DNS"), ("5", "IP pública"),
+         ("6", "Gateway y DHCP")], {"1": "D", "2": "W", "3": "P", "4": "Z", "5": "N", "6": "G"}),
+        ("2", "Red local", [("1", "Conexiones activas"), ("2", "Monitor de tráfico"),
+         ("3", "Prueba de subida"), ("4", "Prueba iperf3"), ("5", "Portal cautivo"),
+         ("6", "Anomalías ARP"), ("7", "Servicios mDNS / Bonjour")],
+         {"1": "C", "2": "M", "3": "U", "4": "I", "5": "O", "6": "A", "7": "B"}),
+        ("3", "Avanzado", [("1", "Traceroute"), ("2", "MTR"),
+         ("3", "Inspección TLS"), ("4", "Guardar / comparar baseline"),
+         ("5", "Exportar topología")], {"1": "T", "2": "X", "3": "K", "4": "V", "5": "F"}),
+    ]
+    while True:
+        choice = _menu_choice("DIAGNÓSTICOS · CATEGORÍA",
+                              [(key, label) for key, label, _items, _map in groups]
+                              + [("0", "Volver al menú principal")])
+        if choice == "0":
+            return None
+        _key, label, items, mapping = next(group for group in groups if group[0] == choice)
+        action = _menu_choice(label, items + [("0", "Volver a categorías")])
+        if action != "0":
+            return mapping[action]
+
+
+def interactive_hosts_prompt() -> Optional[str]:
+    choice = _menu_choice("EQUIPOS ENCONTRADOS", [
+        ("1", "Escaneo profundo de puertos"), ("2", "Buscar servicios web"),
+        ("3", "Exportar resultados"), ("0", "Volver al menú principal"),
+    ])
+    return {"1": "d", "2": "p", "3": "e", "0": None}[choice]
 
 def interactive_subnet_prompt(default_subnet: str) -> str:
-    return Prompt.ask(
-        f"[bold {NEON_PINK}]new subnet[/]",
-        default=default_subnet,
-    )
+    import ipaddress
+
+    while True:
+        value = Prompt.ask(f"[bold {NEON_PINK}]new subnet (CIDR)[/]", default=default_subnet)
+        try:
+            subnet = ipaddress.IPv4Network(value, strict=False)
+        except ValueError:
+            console.print(f"[{NEON_MAGENTA}]Enter an IPv4 subnet such as 192.168.1.0/24.[/]")
+            continue
+        hosts = subnet.num_addresses if subnet.prefixlen >= 31 else subnet.num_addresses - 2
+        if hosts > 1024:
+            console.print(f"[{NEON_MAGENTA}]Choose a subnet with 1,024 hosts or fewer (this one has {hosts:,}).[/]")
+            continue
+        return str(subnet)
 
 
 # ---------------------------------------------------------------------------
@@ -869,10 +896,6 @@ def main() -> int:
         logging.basicConfig(level=logging.DEBUG, format="%(levelname)s %(name)s: %(message)s")
     else:
         logging.basicConfig(level=logging.WARNING)
-
-    # Cache dir + OUI
-    cache_dir = Path(args.cache_dir)
-    OUICache(cache_dir=cache_dir, update=args.update_oui, offline=args.offline)
 
     if args.cmd:
         fn = SUBCOMMANDS.get(args.cmd)

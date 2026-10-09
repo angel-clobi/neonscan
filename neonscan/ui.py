@@ -20,7 +20,7 @@ from rich.prompt import Confirm, Prompt
 from rich.table import Table
 
 from .banner import render_banner, render_intro_panel
-from .network import Host, detect_network
+from .network import IS_TERMUX, Host, detect_network
 from .scanner import PortResult, scan_host
 from .theme import (
     NEON_CYAN,
@@ -58,6 +58,25 @@ def make_progress(label: str) -> Progress:
 
 def render_host_table(hosts: list[Host], ports_by_host: dict[str, list[PortResult]]) -> Table:
     """Render the main ghost-networks table for all discovered hosts."""
+    if console.width < 100:
+        table = Table(
+            title=f"[{NEON_PINK} bold]⟨ HOSTS [{datetime.now().strftime('%H:%M:%S')}] ⟩[/]",
+            box=ROUNDED,
+            border_style=NEON_CYAN,
+            header_style=f"bold {NEON_YELLOW}",
+            expand=True,
+        )
+        table.add_column("#", justify="right", width=3)
+        table.add_column("IP", style=f"bold {NEON_CYAN}", no_wrap=True)
+        table.add_column("HOST", style=NEON_GREEN, overflow="ellipsis")
+        table.add_column("OPEN", justify="right", width=5)
+        for idx, host in enumerate(hosts, start=1):
+            table.add_row(
+                str(idx), host.ip, host.hostname or "—",
+                str(len(ports_by_host.get(host.ip, []))),
+            )
+        return table
+
     table = Table(
         title=f"[{NEON_PINK} bold]⟨ GHOST NET [{datetime.now().strftime('%H:%M:%S')}] ⟩[/]",
         title_justify="left",
@@ -95,6 +114,24 @@ def render_host_table(hosts: list[Host], ports_by_host: dict[str, list[PortResul
 
 
 def render_port_table(ip: str, results: list[PortResult]) -> Table:
+    if console.width < 100:
+        table = Table(
+            title=f"[{NEON_PINK} bold]⟨ PORTS :: {ip} ⟩[/]",
+            box=ROUNDED,
+            border_style=NEON_CYAN,
+            header_style=f"bold {NEON_YELLOW}",
+            expand=True,
+        )
+        table.add_column("PORT", justify="right", width=6)
+        table.add_column("SERVICE", width=12, overflow="ellipsis")
+        table.add_column("DETAIL", overflow="ellipsis")
+        for result in results:
+            detail = result.web_title or result.banner or result.web_server or "open"
+            if result.web_status:
+                detail = f"HTTP {result.web_status} · {detail}"
+            table.add_row(str(result.port), result.service or "?", detail)
+        return table
+
     table = Table(
         title=f"[{NEON_PINK} bold]⟨ DEEP SCAN :: {ip} ⟩[/]",
         title_justify="left",
@@ -176,14 +213,16 @@ def prompt_host(hosts: list[Host]) -> Optional[Host]:
         return None
     console.print("[bold]Choose a target[/]")
     for idx, host in enumerate(hosts, start=1):
-        console.print(
-            f"  [{NEON_PINK}]{idx:>3}[/] {host.ip:<16} "
-            f"[{NEON_CYAN}]{(host.hostname or '—')[:24]:<24}[/] "
-            f"[{NEON_YELLOW}]{host.manufacturer or 'Unknown'}[/]"
-        )
+        if console.width < 100:
+            console.print(f"  [{NEON_PINK}]{idx:>2}[/] {host.ip}  [{NEON_CYAN}]{(host.hostname or '—')[:20]}[/]")
+        else:
+            console.print(
+                f"  [{NEON_PINK}]{idx:>3}[/] {host.ip:<16} "
+                f"[{NEON_CYAN}]{(host.hostname or '—')[:24]:<24}[/] "
+                f"[{NEON_YELLOW}]{host.manufacturer or 'Unknown'}[/]"
+            )
     raw = Prompt.ask(
         f"[bold {NEON_PINK}]target #[/]",
-        default="1",
     )
     try:
         sel = int(raw)
@@ -201,6 +240,9 @@ def prompt_host(hosts: list[Host]) -> Optional[Host]:
 def discover_with_progress(
     subnet: str,
     ping_workers: int = 64,
+    cache_dir: Optional[Path] = None,
+    offline: bool = False,
+    update_oui: bool = False,
 ) -> tuple[list[Host], dict[str, list[PortResult]]]:
     """Discover hosts + do a quick web-only port probe per host.
 
@@ -213,8 +255,12 @@ def discover_with_progress(
     from .network import _ping_once, _read_arp_table, _normalize_mac, _reverse_dns
     from .oui import OUICache
 
-    cache = OUICache(cache_dir=Path.home() / ".neonscan" / "cache")
     candidates = _list_subnet(subnet)
+    cache = OUICache(
+        cache_dir=cache_dir or Path.home() / ".neonscan" / "cache",
+        offline=offline,
+        update=update_oui,
+    )
 
     def _ip_key(ip: str):
         try:
@@ -268,9 +314,11 @@ def discover_with_progress(
             done = 0
 
             def _probe(host: Host) -> tuple[str, list[PortResult]]:
-                return host.ip, scan_host(host.ip, ports=web_ports, workers=20, timeout=1.0)
+                workers = 8 if IS_TERMUX else 20
+                return host.ip, scan_host(host.ip, ports=web_ports, workers=workers, timeout=1.0)
 
-            with ThreadPoolExecutor(max_workers=min(16, len(hosts))) as pool:
+            host_workers = 4 if IS_TERMUX else 16
+            with ThreadPoolExecutor(max_workers=min(host_workers, len(hosts))) as pool:
                 futures = {pool.submit(_probe, h): h for h in hosts}
                 for fut in as_completed(futures):
                     ip, results = fut.result()
@@ -358,8 +406,14 @@ def export_report(
 # ---------------------------------------------------------------------------
 
 def _list_subnet(subnet_cidr: str) -> list[str]:
-    """Return the host IPs in a /24 (or smaller) subnet."""
+    """Return host IPs while refusing accidentally huge interactive sweeps."""
     import ipaddress
 
     net = ipaddress.IPv4Network(subnet_cidr, strict=False)
+    host_count = net.num_addresses if net.prefixlen >= 31 else net.num_addresses - 2
+    if host_count > 1024:
+        raise ValueError(
+            f"Subnet {net} contains {host_count:,} hosts; interactive scans are limited "
+            "to 1,024. Choose a narrower subnet."
+        )
     return [str(h) for h in net.hosts()]

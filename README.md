@@ -135,7 +135,7 @@ package, and reminds you that `wifi`/`aps` need the Termux:API app plus
 ## ✦ Run
 
 ```bash
-python3 neonscan.py                       # interactive mode
+python3 neonscan.py                       # open the menu; nothing scans until selected
 
 # One-shot subcommands:
 python3 neonscan.py wifi
@@ -174,30 +174,28 @@ Flags:
 
 ## ✦ Interactive mode
 
+Starting `python3 neonscan.py` opens the main menu without scanning the network.
+Choose **1** to start a local-network scan, **2** to open diagnostic categories,
+**3** to change the target subnet, or **0** to exit. After a scan, the menu also
+offers host-specific port scans and export. Menus use numbered choices and short
+category screens so they fit narrow terminal windows such as Termux on Android.
+Press `Ctrl-C` during an operation to cancel it and return to the menu.
+
+The interactive scanner accepts subnets with up to 1,024 usable addresses to
+avoid accidentally scheduling an impractically large sweep on a phone. Choose a
+narrower CIDR to scan a larger network in sections. Pass `--offline` to prevent
+the OUI vendor database from being downloaded when a scan is selected.
+
+Explicit one-shot commands remain available when you want to run a specific
+operation directly, for example `python3 neonscan.py net` or
+`python3 neonscan.py dns`.
+
 ```
-  [D] diag        Full diagnostics suite
-  [U] upload      Upload bandwidth test
-  [I] iperf3      LAN iperf3 test
-  [X] mtr         MTR (per-hop loss)
-  [K] tls         TLS / cert inspection
-  [O] captive     Captive portal check
-  [A] arp         ARP anomalies
-  [B] mdns        mDNS / Bonjour
-  [V] watch       Save/diff against baseline
-  [F] topology    Topology export (Mermaid)
-  [W] wifi        Wi-Fi link info
-  [P] ping        Ping a target
-  [N] public      Public IP / ISP
-  [T] traceroute  Traceroute a target
-  [G] gateway     Gateway + DHCP lease
-  [C] connections Active connections
-  [M] monitor     Live RSSI + traffic monitor
-  [S] scan        Re-scan local subnet
-  [R] re-pick subnet
-  [d] deep        Deep-scan a host (top-200 ports)
-  [p] port        Web-quick on selected host
-  [e] export      Export host scan as JSON
-  [q] quit        Disconnect
+  MENÚ PRINCIPAL
+  [1] Escanear la red local
+  [2] Diagnósticos
+  [3] Cambiar subred objetivo
+  [0] Salir
 ```
 
 ## ✦ Sample output

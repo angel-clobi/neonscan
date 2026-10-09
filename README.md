@@ -176,10 +176,19 @@ Flags:
 
 Starting `python3 neonscan.py` opens the main menu without scanning the network.
 Choose **1** to start a local-network scan, **2** to open diagnostic categories,
-**3** to change the target subnet, or **0** to exit. After a scan, the menu also
-offers host-specific port scans and export. Menus use numbered choices and short
-category screens so they fit narrow terminal windows such as Termux on Android.
-Press `Ctrl-C` during an operation to cancel it and return to the menu.
+**3** to change the target subnet, **5** to inspect the current environment and
+available optional commands, or **0** to exit. After a scan, the menu also offers
+host-specific port scans and export. After running a diagnostic or host action,
+NeonScan stays in that section so you can run another action without navigating
+from the beginning. Menus use numbered choices and short category screens to fit
+narrow terminal windows such as Termux on Android. Press `Ctrl-C` during an
+operation to cancel it and return to the current section.
+
+The environment review detects the operating system and searches `PATH` for
+optional commands such as `ping`, `traceroute`, `openssl`, and `iperf3`. It lists
+available fallbacks and platform-specific install suggestions. It never installs
+system packages automatically; Python's `rich` UI dependency is bundled in
+`vendor/wheels/` and bootstrapped locally.
 
 The interactive scanner accepts subnets with up to 1,024 usable addresses to
 avoid accidentally scheduling an impractically large sweep on a phone. Choose a
@@ -195,6 +204,7 @@ operation directly, for example `python3 neonscan.py net` or
   [1] Escanear la red local
   [2] Diagnósticos
   [3] Cambiar subred objetivo
+  [5] Revisar entorno y dependencias
   [0] Salir
 ```
 

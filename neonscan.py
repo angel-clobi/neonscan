@@ -118,6 +118,7 @@ from neonscan.diagnostics import (
     run_full_diag_summary,
 )
 from neonscan import network
+from neonscan.environment import environment_report, render_environment_report
 from neonscan.network import detect_network
 from neonscan.theme import NEON_MAGENTA, NEON_PINK, NEON_PURPLE
 from neonscan.ui import (
@@ -648,8 +649,20 @@ def interactive_mode(args) -> int:
 
     hosts = []
     ports_by_host = {}
+    menu_context = "main"
     while True:
-        action = interactive_prompt(has_hosts=bool(hosts))
+        if menu_context == "diagnostics":
+            action = interactive_diagnostics_prompt()
+            if action is None:
+                menu_context = "main"
+                continue
+        elif menu_context == "hosts":
+            action = interactive_hosts_prompt()
+            if action is None:
+                menu_context = "main"
+                continue
+        else:
+            action = interactive_prompt(has_hosts=bool(hosts))
         if action == "q":
             console.print(f"[bold {NEON_PINK}]// jack out. 👋[/]")
             return 0
@@ -681,10 +694,13 @@ def interactive_mode(args) -> int:
                 render_empty_state()
             continue
         if action == "m":
-            action = interactive_diagnostics_prompt()
-        elif action == "h":
-            action = interactive_hosts_prompt()
-        if action is None:
+            menu_context = "diagnostics"
+            continue
+        if action == "h":
+            menu_context = "hosts"
+            continue
+        if action == "E":
+            render_environment_report(environment_report())
             continue
 
         try:
@@ -827,13 +843,10 @@ def interactive_prompt(has_hosts: bool = False) -> str:
                ("3", "Cambiar subred objetivo")]
     if has_hosts:
         options.append(("4", "Herramientas para equipos encontrados"))
+    options.append(("5", "Revisar entorno y dependencias"))
     options.append(("0", "Salir"))
     choice = _menu_choice("MENÚ PRINCIPAL", options)
-    if choice == "2":
-        return interactive_diagnostics_prompt() or "back"
-    if choice == "4":
-        return interactive_hosts_prompt() or "back"
-    return {"1": "s", "3": "r", "0": "q"}[choice]
+    return {"1": "s", "2": "m", "3": "r", "4": "h", "5": "E", "0": "q"}[choice]
 
 
 def interactive_diagnostics_prompt() -> Optional[str]:
